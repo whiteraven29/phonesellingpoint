@@ -7,8 +7,9 @@ import {
   TouchableOpacity,
   SafeAreaView,
   Dimensions,
+  Modal,
 } from 'react-native';
-import { TrendingUp, DollarSign, Package, Users, Calendar, Filter } from 'lucide-react-native';
+import { TrendingUp, DollarSign, Package, Users, Calendar, Filter, AlertTriangle } from 'lucide-react-native';
 
 const { width } = Dimensions.get('window');
 
@@ -24,12 +25,14 @@ interface PhoneSales {
   brand: string;
   unitsSold: number;
   revenue: number;
+  stock: number;
 }
 
 export default function AnalyticsTab() {
   const [timeframe, setTimeframe] = useState<'daily' | 'weekly' | 'monthly'>('daily');
   const [salesData, setSalesData] = useState<SalesData[]>([]);
   const [topSellingPhones, setTopSellingPhones] = useState<PhoneSales[]>([]);
+  const [selectedProduct, setSelectedProduct] = useState<PhoneSales | null>(null);
 
   useEffect(() => {
     // Mock data - in real app this would come from Supabase
@@ -42,10 +45,10 @@ export default function AnalyticsTab() {
     ];
 
     const mockTopSelling: PhoneSales[] = [
-      { name: 'iPhone 15 Pro', brand: 'Apple', unitsSold: 15, revenue: 14985 },
-      { name: 'Galaxy S24 Ultra', brand: 'Samsung', unitsSold: 12, revenue: 14388 },
-      { name: 'Pixel 8 Pro', brand: 'Google', unitsSold: 8, revenue: 7192 },
-      { name: 'OnePlus 12', brand: 'OnePlus', unitsSold: 6, revenue: 4794 },
+      { name: 'iPhone 15 Pro', brand: 'Apple', unitsSold: 15, revenue: 14985, stock: 2 },
+      { name: 'Galaxy S24 Ultra', brand: 'Samsung', unitsSold: 12, revenue: 14388, stock: 8 },
+      { name: 'Pixel 8 Pro', brand: 'Google', unitsSold: 8, revenue: 7192, stock: 0 },
+      { name: 'OnePlus 12', brand: 'OnePlus', unitsSold: 6, revenue: 4794, stock: 20 },
     ];
 
     setSalesData(mockSalesData);
@@ -70,6 +73,20 @@ export default function AnalyticsTab() {
     return totalOrders > 0 ? totalRevenue / totalOrders : 0;
   };
 
+  const getLowStockItems = () => {
+    return topSellingPhones.filter((phone) => phone.stock <= 3).length;
+  };
+
+  const getInventoryValue = () => {
+    return topSellingPhones.reduce((total, phone) => total + phone.revenue, 0);
+  };
+
+  const getStockTurnoverRate = () => {
+    const totalUnitsSold = topSellingPhones.reduce((total, phone) => total + phone.unitsSold, 0);
+    const totalStock = topSellingPhones.reduce((total, phone) => total + phone.stock, 0);
+    return totalStock > 0 ? (totalUnitsSold / (totalUnitsSold + totalStock)) * 100 : 0;
+  };
+
   const timeframes = [
     { key: 'daily', label: 'Daily' },
     { key: 'weekly', label: 'Weekly' },
@@ -79,9 +96,9 @@ export default function AnalyticsTab() {
   return (
     <SafeAreaView style={styles.container}>
       <View style={styles.header}>
-        <Text style={styles.headerTitle}>Analytics</Text>
+        <Text style={styles.headerTitle}>Business Analytics</Text>
         <TouchableOpacity style={styles.filterButton}>
-          <Filter size={20} color="#3B82F6" />
+          <Filter size={20} color="#FFFFFF" />
         </TouchableOpacity>
       </View>
 
@@ -90,16 +107,10 @@ export default function AnalyticsTab() {
         {timeframes.map(({ key, label }) => (
           <TouchableOpacity
             key={key}
-            style={[
-              styles.timeframeButton,
-              timeframe === key && styles.timeframeButtonActive
-            ]}
+            style={[styles.timeframeButton, timeframe === key && styles.timeframeButtonActive]}
             onPress={() => setTimeframe(key as any)}
           >
-            <Text style={[
-              styles.timeframeText,
-              timeframe === key && styles.timeframeTextActive
-            ]}>
+            <Text style={[styles.timeframeText, timeframe === key && styles.timeframeTextActive]}>
               {label}
             </Text>
           </TouchableOpacity>
@@ -118,9 +129,8 @@ export default function AnalyticsTab() {
               <Text style={styles.metricChangeText}>+12.5%</Text>
             </View>
           </View>
-
           <View style={styles.metricCard}>
-            <Users size={24} color="#3B82F6" />
+            <Users size={24} color="#2563EB" />
             <Text style={styles.metricValue}>{getTotalOrders()}</Text>
             <Text style={styles.metricLabel}>Total Orders</Text>
             <View style={styles.metricChange}>
@@ -128,9 +138,6 @@ export default function AnalyticsTab() {
               <Text style={styles.metricChangeText}>+8.3%</Text>
             </View>
           </View>
-        </View>
-
-        <View style={styles.metricsContainer}>
           <View style={styles.metricCard}>
             <Package size={24} color="#F59E0B" />
             <Text style={styles.metricValue}>{getTotalUnits()}</Text>
@@ -140,7 +147,8 @@ export default function AnalyticsTab() {
               <Text style={styles.metricChangeText}>+15.2%</Text>
             </View>
           </View>
-
+        </View>
+        <View style={styles.metricsContainer}>
           <View style={styles.metricCard}>
             <Calendar size={24} color="#8B5CF6" />
             <Text style={styles.metricValue}>${getAverageOrderValue().toFixed(0)}</Text>
@@ -150,76 +158,195 @@ export default function AnalyticsTab() {
               <Text style={styles.metricChangeText}>+5.1%</Text>
             </View>
           </View>
+          <View style={styles.metricCard}>
+            <AlertTriangle size={24} color="#EF4444" />
+            <Text style={styles.metricValue}>{getLowStockItems()}</Text>
+            <Text style={styles.metricLabel}>Low Stock Items</Text>
+            <View style={styles.metricChange}>
+              <Text style={styles.metricChangeText}>Monitor</Text>
+            </View>
+          </View>
+          <View style={styles.metricCard}>
+            <Package size={24} color="#3B82F6" />
+            <Text style={styles.metricValue}>{getStockTurnoverRate().toFixed(1)}%</Text>
+            <Text style={styles.metricLabel}>Stock Turnover</Text>
+            <View style={styles.metricChange}>
+              <TrendingUp size={16} color="#10B981" />
+              <Text style={styles.metricChangeText}>+2.3%</Text>
+            </View>
+          </View>
         </View>
 
         {/* Sales Chart Placeholder */}
         <View style={styles.chartSection}>
           <Text style={styles.sectionTitle}>Revenue Trend</Text>
-          <View style={styles.chartContainer}>
-            <Text style={styles.chartPlaceholder}>
-              📈 Sales chart would be displayed here
-            </Text>
-            <Text style={styles.chartSubtext}>
-              Integration with charting library like Victory Native
-            </Text>
+          <View style={styles.chartPlaceholder}>
+            <Text style={styles.chartPlaceholderText}>Chart would be displayed here</Text>
+          </View>
+        </View>
+
+        {/* Inventory Alerts */}
+        {getLowStockItems() > 0 && (
+          <View style={styles.alertSection}>
+            <Text style={styles.sectionTitle}>Inventory Alerts</Text>
+            <View style={styles.alertCard}>
+              <AlertTriangle size={24} color="#EF4444" />
+              <View style={styles.alertContent}>
+                <Text style={styles.alertTitle}>Low Stock Alert</Text>
+                <Text style={styles.alertText}>
+                  {topSellingPhones
+                    .filter((phone) => phone.stock <= 3)
+                    .map((phone) => `${phone.name} (${phone.stock} left)`)
+                    .join(', ')}
+                </Text>
+              </View>
+            </View>
+          </View>
+        )}
+
+        {/* Inventory Value */}
+        <View style={styles.inventoryValueSection}>
+          <Text style={styles.sectionTitle}>Inventory Value</Text>
+          <View style={styles.metricCard}>
+            <DollarSign size={24} color="#10B981" />
+            <Text style={styles.metricValue}>${getInventoryValue().toLocaleString()}</Text>
+            <Text style={styles.metricLabel}>Total Inventory Value</Text>
           </View>
         </View>
 
         {/* Top Selling Products */}
         <View style={styles.topProductsSection}>
           <Text style={styles.sectionTitle}>Top Selling Products</Text>
-          
-          {topSellingPhones.map((phone, index) => (
-            <View key={index} style={styles.productCard}>
-              <View style={styles.productRank}>
-                <Text style={styles.rankNumber}>{index + 1}</Text>
-              </View>
-              
-              <View style={styles.productInfo}>
-                <Text style={styles.productName}>{phone.name}</Text>
-                <Text style={styles.productBrand}>{phone.brand}</Text>
-              </View>
-              
-              <View style={styles.productStats}>
-                <Text style={styles.productUnits}>{phone.unitsSold} units</Text>
-                <Text style={styles.productRevenue}>${phone.revenue.toLocaleString()}</Text>
-              </View>
-            </View>
-          ))}
+          <View style={styles.productGrid}>
+            {topSellingPhones.map((phone, index) => (
+              <TouchableOpacity
+                key={index}
+                style={styles.productCard}
+                onPress={() => setSelectedProduct(phone)}
+                activeOpacity={0.7}
+              >
+                <View style={styles.productRank}>
+                  <Text style={styles.rankNumber}>{index + 1}</Text>
+                </View>
+                <View style={styles.productInfo}>
+                  <Text style={styles.productName} numberOfLines={1}>
+                    {phone.name}
+                  </Text>
+                  <Text style={styles.productBrand}>{phone.brand}</Text>
+                  <Text style={styles.productStock}>
+                    Stock: {phone.stock} {phone.stock <= 3 ? '(Low)' : ''}
+                  </Text>
+                </View>
+                <View style={styles.productStats}>
+                  <Text style={styles.productUnits}>{phone.unitsSold} units</Text>
+                  <Text style={styles.productRevenue}>${phone.revenue.toLocaleString()}</Text>
+                </View>
+              </TouchableOpacity>
+            ))}
+          </View>
         </View>
 
         {/* Recent Sales */}
         <View style={styles.recentSalesSection}>
           <Text style={styles.sectionTitle}>Recent Sales</Text>
-          
-          {salesData.slice(0, 5).map((data, index) => (
-            <View key={index} style={styles.salesCard}>
-              <View style={styles.salesDate}>
-                <Text style={styles.salesDateText}>
-                  {new Date(data.date).toLocaleDateString('en-US', { 
-                    month: 'short', 
-                    day: 'numeric' 
-                  })}
-                </Text>
-              </View>
-              
-              <View style={styles.salesStats}>
-                <Text style={styles.salesRevenue}>${data.revenue}</Text>
-                <Text style={styles.salesOrders}>{data.orders} orders</Text>
-                <Text style={styles.salesUnits}>{data.units} units</Text>
-              </View>
+          {salesData.length === 0 ? (
+            <View style={styles.emptyState}>
+              <Text style={styles.emptyStateText}>No sales data available</Text>
+              <Text style={styles.emptyStateSubText}>Check back later or adjust the timeframe</Text>
+              <TouchableOpacity style={styles.emptyStateButton}>
+                <Text style={styles.emptyStateButtonText}>Refresh</Text>
+              </TouchableOpacity>
             </View>
-          ))}
+          ) : (
+            salesData.slice(0, 5).map((data, index) => (
+              <View key={index} style={styles.salesCard}>
+                <View style={styles.salesDate}>
+                  <Text style={styles.salesDateText}>
+                    {new Date(data.date).toLocaleDateString('en-US', {
+                      month: 'short',
+                      day: 'numeric',
+                    })}
+                  </Text>
+                </View>
+                <View style={styles.salesStats}>
+                  <Text style={styles.salesRevenue}>${data.revenue.toLocaleString()}</Text>
+                  <Text style={styles.salesOrders}>{data.orders} orders</Text>
+                  <Text style={styles.salesUnits}>{data.units} units</Text>
+                </View>
+              </View>
+            ))
+          )}
         </View>
       </ScrollView>
+
+      {/* Product Details Modal */}
+      <Modal
+        visible={!!selectedProduct}
+        animationType="slide"
+        presentationStyle="pageSheet"
+        onRequestClose={() => setSelectedProduct(null)}
+      >
+        <SafeAreaView style={styles.modalContainer}>
+          <View style={styles.modalHeader}>
+            <TouchableOpacity onPress={() => setSelectedProduct(null)}>
+              <Text style={styles.modalCloseText}>Close</Text>
+            </TouchableOpacity>
+            <Text style={styles.modalTitle}>Product Analytics</Text>
+            <View style={{ width: 50 }} />
+          </View>
+          {selectedProduct && (
+            <ScrollView style={styles.modalContent}>
+              <View style={styles.modalSection}>
+                <Text style={styles.modalSectionTitle}>Product Details</Text>
+                <Text style={styles.modalProductName}>{selectedProduct.name}</Text>
+                <Text style={styles.modalProductBrand}>{selectedProduct.brand}</Text>
+              </View>
+              <View style={styles.modalSection}>
+                <Text style={styles.modalSectionTitle}>Sales Performance</Text>
+                <View style={styles.modalMetricRow}>
+                  <Text style={styles.modalMetricLabel}>Units Sold:</Text>
+                  <Text style={styles.modalMetricValue}>{selectedProduct.unitsSold}</Text>
+                </View>
+                <View style={styles.modalMetricRow}>
+                  <Text style={styles.modalMetricLabel}>Revenue:</Text>
+                  <Text style={styles.modalMetricValue}>
+                    ${selectedProduct.revenue.toLocaleString()}
+                  </Text>
+                </View>
+                <View style={styles.modalMetricRow}>
+                  <Text style={styles.modalMetricLabel}>Stock Remaining:</Text>
+                  <Text
+                    style={[
+                      styles.modalMetricValue,
+                      selectedProduct.stock <= 3 && styles.modalLowStock,
+                    ]}
+                  >
+                    {selectedProduct.stock} {selectedProduct.stock <= 3 ? '(Low)' : ''}
+                  </Text>
+                </View>
+              </View>
+              <View style={styles.modalSection}>
+                <Text style={styles.modalSectionTitle}>Recommendations</Text>
+                <Text style={styles.modalRecommendation}>
+                  {selectedProduct.stock <= 3
+                    ? 'Restock this product to avoid shortages.'
+                    : 'Maintain current stock levels.'}
+                </Text>
+              </View>
+            </ScrollView>
+          )}
+        </SafeAreaView>
+      </Modal>
     </SafeAreaView>
   );
 }
 
+const cardWidth = width > 600 ? width / 3 - 24 : width / 2 - 24;
+
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: '#F9FAFB',
+    backgroundColor: '#F3F4F6',
   },
   header: {
     flexDirection: 'row',
@@ -227,22 +354,29 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     paddingHorizontal: 20,
     paddingVertical: 16,
-    backgroundColor: '#FFFFFF',
-    borderBottomWidth: 1,
-    borderBottomColor: '#E5E7EB',
+    backgroundColor: '#1E3A8A',
+    borderBottomLeftRadius: 20,
+    borderBottomRightRadius: 20,
+    elevation: 4,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.1,
+    shadowRadius: 4,
   },
   headerTitle: {
-    fontSize: 24,
-    fontWeight: 'bold',
-    color: '#111827',
+    fontSize: 26,
+    fontWeight: '700',
+    color: '#FFFFFF',
   },
   filterButton: {
     padding: 8,
+    backgroundColor: '#2563EB',
+    borderRadius: 8,
   },
   timeframeContainer: {
     flexDirection: 'row',
     backgroundColor: '#FFFFFF',
-    paddingHorizontal: 20,
+    paddingHorizontal: 16,
     paddingVertical: 12,
     borderBottomWidth: 1,
     borderBottomColor: '#E5E7EB',
@@ -254,9 +388,10 @@ const styles = StyleSheet.create({
     borderRadius: 8,
     marginHorizontal: 4,
     alignItems: 'center',
+    backgroundColor: '#F3F4F6',
   },
   timeframeButtonActive: {
-    backgroundColor: '#3B82F6',
+    backgroundColor: '#2563EB',
   },
   timeframeText: {
     fontSize: 14,
@@ -265,22 +400,25 @@ const styles = StyleSheet.create({
   },
   timeframeTextActive: {
     color: '#FFFFFF',
+    fontWeight: '600',
   },
   content: {
     flex: 1,
-    padding: 20,
+    padding: 16,
   },
   metricsContainer: {
     flexDirection: 'row',
+    flexWrap: 'wrap',
     marginBottom: 16,
     gap: 12,
+    justifyContent: 'space-between',
   },
   metricCard: {
-    flex: 1,
     backgroundColor: '#FFFFFF',
-    padding: 16,
+    padding: 12,
     borderRadius: 12,
     alignItems: 'center',
+    width: cardWidth,
     shadowColor: '#000',
     shadowOffset: { width: 0, height: 2 },
     shadowOpacity: 0.1,
@@ -288,8 +426,8 @@ const styles = StyleSheet.create({
     elevation: 2,
   },
   metricValue: {
-    fontSize: 24,
-    fontWeight: 'bold',
+    fontSize: 20,
+    fontWeight: '600',
     color: '#111827',
     marginTop: 8,
     marginBottom: 4,
@@ -313,43 +451,72 @@ const styles = StyleSheet.create({
   chartSection: {
     marginBottom: 24,
   },
-  sectionTitle: {
-    fontSize: 18,
-    fontWeight: 'bold',
-    color: '#111827',
-    marginBottom: 16,
-  },
-  chartContainer: {
+  chartPlaceholder: {
     backgroundColor: '#FFFFFF',
-    padding: 40,
+    padding: 20,
     borderRadius: 12,
     alignItems: 'center',
+    justifyContent: 'center',
+    height: 200,
+  },
+  chartPlaceholderText: {
+    color: '#6B7280',
+    fontSize: 16,
+  },
+  sectionTitle: {
+    fontSize: 18,
+    fontWeight: '600',
+    color: '#111827',
+    marginBottom: 12,
+  },
+  alertSection: {
+    marginBottom: 24,
+  },
+  alertCard: {
+    flexDirection: 'row',
+    backgroundColor: '#FFFFFF',
+    padding: 16,
+    borderRadius: 12,
+    marginBottom: 8,
     shadowColor: '#000',
     shadowOffset: { width: 0, height: 2 },
     shadowOpacity: 0.1,
     shadowRadius: 4,
     elevation: 2,
   },
-  chartPlaceholder: {
-    fontSize: 18,
-    color: '#6B7280',
-    marginBottom: 8,
+  alertContent: {
+    flex: 1,
+    marginLeft: 12,
   },
-  chartSubtext: {
+  alertTitle: {
+    fontSize: 16,
+    fontWeight: '600',
+    color: '#111827',
+    marginBottom: 4,
+  },
+  alertText: {
     fontSize: 14,
-    color: '#9CA3AF',
-    textAlign: 'center',
+    color: '#6B7280',
+  },
+  inventoryValueSection: {
+    marginBottom: 24,
   },
   topProductsSection: {
     marginBottom: 24,
   },
+  productGrid: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    justifyContent: 'space-between',
+  },
   productCard: {
     flexDirection: 'row',
     backgroundColor: '#FFFFFF',
-    padding: 16,
+    padding: 12,
     borderRadius: 12,
-    marginBottom: 8,
+    marginBottom: 12,
     alignItems: 'center',
+    width: cardWidth,
     shadowColor: '#000',
     shadowOffset: { width: 0, height: 2 },
     shadowOpacity: 0.1,
@@ -357,10 +524,10 @@ const styles = StyleSheet.create({
     elevation: 2,
   },
   productRank: {
-    width: 32,
-    height: 32,
-    borderRadius: 16,
-    backgroundColor: '#3B82F6',
+    width: 28,
+    height: 28,
+    borderRadius: 14,
+    backgroundColor: '#2563EB',
     justifyContent: 'center',
     alignItems: 'center',
     marginRight: 12,
@@ -368,33 +535,38 @@ const styles = StyleSheet.create({
   rankNumber: {
     color: '#FFFFFF',
     fontSize: 14,
-    fontWeight: 'bold',
+    fontWeight: '600',
   },
   productInfo: {
     flex: 1,
   },
   productName: {
-    fontSize: 16,
+    fontSize: 14,
     fontWeight: '600',
     color: '#111827',
     marginBottom: 2,
   },
   productBrand: {
-    fontSize: 14,
+    fontSize: 12,
     color: '#6B7280',
+    marginBottom: 2,
+  },
+  productStock: {
+    fontSize: 12,
+    color: '#EF4444',
   },
   productStats: {
     alignItems: 'flex-end',
   },
   productUnits: {
-    fontSize: 14,
+    fontSize: 12,
     color: '#4B5563',
     marginBottom: 2,
   },
   productRevenue: {
-    fontSize: 16,
-    fontWeight: 'bold',
-    color: '#3B82F6',
+    fontSize: 14,
+    fontWeight: '600',
+    color: '#2563EB',
   },
   recentSalesSection: {
     marginBottom: 24,
@@ -402,7 +574,7 @@ const styles = StyleSheet.create({
   salesCard: {
     flexDirection: 'row',
     backgroundColor: '#FFFFFF',
-    padding: 16,
+    padding: 12,
     borderRadius: 12,
     marginBottom: 8,
     alignItems: 'center',
@@ -414,7 +586,7 @@ const styles = StyleSheet.create({
   },
   salesDate: {
     width: 60,
-    marginRight: 16,
+    marginRight: 12,
   },
   salesDateText: {
     fontSize: 14,
@@ -428,8 +600,8 @@ const styles = StyleSheet.create({
   },
   salesRevenue: {
     fontSize: 16,
-    fontWeight: 'bold',
-    color: '#3B82F6',
+    fontWeight: '600',
+    color: '#2563EB',
   },
   salesOrders: {
     fontSize: 14,
@@ -438,5 +610,102 @@ const styles = StyleSheet.create({
   salesUnits: {
     fontSize: 14,
     color: '#6B7280',
+  },
+  emptyState: {
+    flex: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
+    paddingVertical: 40,
+  },
+  emptyStateText: {
+    fontSize: 24,
+    fontWeight: '600',
+    color: '#111827',
+    marginBottom: 8,
+  },
+  emptyStateSubText: {
+    fontSize: 16,
+    color: '#6B7280',
+    marginBottom: 16,
+  },
+  emptyStateButton: {
+    backgroundColor: '#2563EB',
+    paddingVertical: 12,
+    paddingHorizontal: 24,
+    borderRadius: 8,
+  },
+  emptyStateButtonText: {
+    color: '#FFFFFF',
+    fontSize: 16,
+    fontWeight: '600',
+  },
+  modalContainer: {
+    flex: 1,
+    backgroundColor: '#FFFFFF',
+  },
+  modalHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    paddingHorizontal: 20,
+    paddingVertical: 16,
+    borderBottomWidth: 1,
+    borderBottomColor: '#E5E7EB',
+  },
+  modalTitle: {
+    fontSize: 20,
+    fontWeight: '600',
+    color: '#111827',
+  },
+  modalCloseText: {
+    fontSize: 16,
+    color: '#2563EB',
+    fontWeight: '500',
+  },
+  modalContent: {
+    flex: 1,
+    padding: 20,
+  },
+  modalSection: {
+    marginBottom: 16,
+  },
+  modalSectionTitle: {
+    fontSize: 16,
+    fontWeight: '600',
+    color: '#374151',
+    marginBottom: 8,
+  },
+  modalProductName: {
+    fontSize: 18,
+    fontWeight: '600',
+    color: '#111827',
+    marginBottom: 4,
+  },
+  modalProductBrand: {
+    fontSize: 14,
+    color: '#6B7280',
+  },
+  modalMetricRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 8,
+  },
+  modalMetricLabel: {
+    fontSize: 14,
+    color: '#4B5563',
+  },
+  modalMetricValue: {
+    fontSize: 14,
+    fontWeight: '600',
+    color: '#111827',
+  },
+  modalLowStock: {
+    color: '#EF4444',
+  },
+  modalRecommendation: {
+    fontSize: 14,
+    color: '#6B7280',
+    lineHeight: 20,
   },
 });
