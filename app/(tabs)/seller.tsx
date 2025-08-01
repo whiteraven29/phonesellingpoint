@@ -15,6 +15,7 @@ import {
 } from 'react-native';
 import { Plus, CreditCard as Edit, AlertTriangle, Package, DollarSign } from 'lucide-react-native';
 import * as ImagePicker from 'expo-image-picker';
+import * as FileSystem from 'expo-file-system';
 import { supabase } from '@/lib/supabase';
 
 interface Phone {
@@ -26,8 +27,6 @@ interface Phone {
   image: string;
   description: string;
 }
-
-
 
 export default function SellerTab() {
   const [phones, setPhones] = useState<Phone[]>([]);
@@ -54,9 +53,9 @@ export default function SellerTab() {
       const { data, error } = await supabase.from('phones').select('*');
       if (error) throw error;
       setPhones(data || []);
-    } catch (error) {
-      Alert.alert('Error', 'Failed to fetch phones');
-      console.error(error);
+    } catch (error: any) {
+      Alert.alert('Error', `Failed to fetch phones: ${error.message}`);
+      console.error('Fetch phones error:', error);
     } finally {
       setLoading(false);
     }
@@ -112,20 +111,39 @@ export default function SellerTab() {
   const uploadImage = async (uri: string) => {
     setUploading(true);
     try {
-      const response = await fetch(uri);
-      const blob = await response.blob();
+      const fileInfo = await FileSystem.getInfoAsync(uri);
+      if (!fileInfo.exists) {
+        throw new Error('File does not exist');
+      }
+
+      // Read the file as base64
+      const fileContent = await FileSystem.readAsStringAsync(uri, {
+        encoding: FileSystem.EncodingType.Base64,
+      });
+
       const fileName = `phone_${Date.now()}.jpg`;
+      const filePath = `${fileName}`;
+
+      // Upload the file
       const { data, error } = await supabase.storage
-        .from('phone-images')
-        .upload(fileName, blob, { contentType: 'image/jpeg' });
+        .from('storagephones')
+        .upload(filePath, decodeURIComponent(fileContent), {
+          contentType: 'image/jpeg',
+          upsert: true,
+        });
+
       if (error) throw error;
-      const { publicUrl } = supabase.storage
-        .from('phone-images')
-        .getPublicUrl(fileName).data;
+
+      // Get the public URL
+      const { data: { publicUrl } } = supabase.storage
+        .from('storagephones')
+        .getPublicUrl(filePath);
+
+      if (!publicUrl) throw new Error('Failed to get public URL');
       return publicUrl;
-    } catch (error) {
-      Alert.alert('Error', 'Failed to upload image');
-      console.error(error);
+    } catch (error: any) {
+      console.error('Image upload error:', error);
+      Alert.alert('Upload Error', error.message || 'Failed to upload image');
       return null;
     } finally {
       setUploading(false);
@@ -141,6 +159,10 @@ export default function SellerTab() {
     const stock = parseInt(formData.stock);
     if (isNaN(price) || isNaN(stock)) {
       Alert.alert('Error', 'Price and stock must be valid numbers');
+      return;
+    }
+    if (price < 0 || stock < 0) {
+      Alert.alert('Error', 'Price and stock cannot be negative');
       return;
     }
 
@@ -162,7 +184,6 @@ export default function SellerTab() {
 
     try {
       if (editingPhone) {
-        // Update existing phone
         const { error } = await supabase
           .from('phones')
           .update(phoneData)
@@ -175,7 +196,6 @@ export default function SellerTab() {
         );
         Alert.alert('Success', 'Phone updated successfully');
       } else {
-        // Add new phone
         const { data, error } = await supabase.from('phones').insert([phoneData]).select();
         if (error) throw error;
         setPhones((prev) => [...prev, { ...phoneData, id: data[0].id }]);
@@ -183,13 +203,13 @@ export default function SellerTab() {
       }
       setShowAddModal(false);
       resetForm();
-    } catch (error) {
-      Alert.alert('Error', 'Failed to save phone');
-      console.error(error);
+    } catch (error: any) {
+      Alert.alert('Error', `Failed to save phone: ${error.message}`);
+      console.error('Save phone error:', error);
     }
   };
 
-  const getLowStockPhones = () => phones.filter((phone) => phone.stock <= 3);
+  const getLowStockPhones = () => phones.filter((phone) => phone.stock <= 3 && phone.stock > 0);
   const getOutOfStockPhones = () => phones.filter((phone) => phone.stock === 0);
   const getTotalValue = () => phones.reduce((total, phone) => total + phone.price * phone.stock, 0);
 
@@ -267,33 +287,43 @@ export default function SellerTab() {
         {/* Inventory List */}
         <View style={styles.inventorySection}>
           <Text style={styles.sectionTitle}>Inventory</Text>
-          <View style={styles.phoneGrid}>
-            {phones.map((phone) => (
-              <View key={phone.id} style={styles.phoneCard}>
-                <Image source={{ uri: phone.image }} style={styles.phoneImage} />
-                <View style={styles.phoneInfo}>
-                  <Text style={styles.phoneName}>{phone.name}</Text>
-                  <Text style={styles.phoneBrand}>{phone.brand}</Text>
-                  <Text style={styles.phonePrice}>${phone.price.toFixed(2)}</Text>
-                  <Text
-                    style={[
-                      styles.stockText,
-                      phone.stock === 0
-                        ? styles.outOfStock
-                        : phone.stock <= 3
-                        ? styles.lowStock
-                        : styles.inStock,
-                    ]}
-                  >
-                    Stock: {phone.stock}
-                  </Text>
+          {phones.length === 0 ? (
+            <View style={styles.emptyContainer}>
+              <Text style={styles.emptyText}>No products available</Text>
+              <Text style={styles.emptySubText}>Add a product to get started!</Text>
+              <TouchableOpacity style={styles.addButton} onPress={openAddModal}>
+                <Text style={styles.addButtonText}>Add Product</Text>
+              </TouchableOpacity>
+            </View>
+          ) : (
+            <View style={styles.phoneGrid}>
+              {phones.map((phone) => (
+                <View key={phone.id} style={styles.phoneCard}>
+                  <Image source={{ uri: phone.image }} style={styles.phoneImage} />
+                  <View style={styles.phoneInfo}>
+                    <Text style={styles.phoneName}>{phone.name}</Text>
+                    <Text style={styles.phoneBrand}>{phone.brand}</Text>
+                    <Text style={styles.phonePrice}>${phone.price.toFixed(2)}</Text>
+                    <Text
+                      style={[
+                        styles.stockText,
+                        phone.stock === 0
+                          ? styles.outOfStock
+                          : phone.stock <= 3
+                          ? styles.lowStock
+                          : styles.inStock,
+                      ]}
+                    >
+                      Stock: {phone.stock}
+                    </Text>
+                  </View>
+                  <TouchableOpacity style={styles.editButton} onPress={() => openEditModal(phone)}>
+                    <Edit size={20} color="#2563EB" />
+                  </TouchableOpacity>
                 </View>
-                <TouchableOpacity style={styles.editButton} onPress={() => openEditModal(phone)}>
-                  <Edit size={20} color="#2563EB" />
-                </TouchableOpacity>
-              </View>
-            ))}
-          </View>
+              ))}
+            </View>
+          )}
         </View>
       </ScrollView>
 
@@ -307,9 +337,9 @@ export default function SellerTab() {
             <Text style={styles.modalTitle}>
               {editingPhone ? 'Edit Product' : 'Add New Product'}
             </Text>
-            <TouchableOpacity onPress={handleSave} disabled={uploading}>
-              <Text style={[styles.saveText, uploading && styles.disabledText]}>
-                {uploading ? 'Saving...' : 'Save'}
+            <TouchableOpacity onPress={handleSave} disabled={uploading || loading}>
+              <Text style={[styles.saveText, (uploading || loading) && styles.disabledText]}>
+                {uploading ? 'Uploading...' : loading ? 'Saving...' : 'Save'}
               </Text>
             </TouchableOpacity>
           </View>
@@ -321,6 +351,7 @@ export default function SellerTab() {
                 value={formData.name}
                 onChangeText={(text) => setFormData((prev) => ({ ...prev, name: text }))}
                 placeholder="Enter phone name"
+                autoCapitalize="words"
               />
             </View>
             <View style={styles.inputGroup}>
@@ -330,6 +361,7 @@ export default function SellerTab() {
                 value={formData.brand}
                 onChangeText={(text) => setFormData((prev) => ({ ...prev, brand: text }))}
                 placeholder="Enter brand name"
+                autoCapitalize="words"
               />
             </View>
             <View style={styles.inputGroup}>
@@ -338,8 +370,8 @@ export default function SellerTab() {
                 style={styles.input}
                 value={formData.price}
                 onChangeText={(text) => setFormData((prev) => ({ ...prev, price: text }))}
-                placeholder="Enter price"
-                keyboardType="numeric"
+                placeholder="Enter price (e.g., 999.99)"
+                keyboardType="decimal-pad"
               />
             </View>
             <View style={styles.inputGroup}>
@@ -349,7 +381,7 @@ export default function SellerTab() {
                 value={formData.stock}
                 onChangeText={(text) => setFormData((prev) => ({ ...prev, stock: text }))}
                 placeholder="Enter stock quantity"
-                keyboardType="numeric"
+                keyboardType="number-pad"
               />
             </View>
             <View style={styles.inputGroup}>
@@ -366,7 +398,7 @@ export default function SellerTab() {
                   </View>
                 )}
                 <TouchableOpacity
-                  style={styles.uploadButton}
+                  style={[styles.uploadButton, uploading && styles.disabledButton]}
                   onPress={handlePickImage}
                   disabled={uploading}
                 >
@@ -652,6 +684,9 @@ const styles = StyleSheet.create({
     paddingVertical: 8,
     paddingHorizontal: 16,
   },
+  disabledButton: {
+    backgroundColor: '#9CA3AF',
+  },
   uploadButtonText: {
     color: '#FFFFFF',
     fontSize: 14,
@@ -667,5 +702,11 @@ const styles = StyleSheet.create({
     fontSize: 18,
     color: '#6B7280',
     marginTop: 16,
+  },
+  emptySubText: {
+    fontSize: 14,
+    color: '#6B7280',
+    marginTop: 8,
+    marginBottom: 16,
   },
 });
