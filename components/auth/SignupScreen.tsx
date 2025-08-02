@@ -11,7 +11,7 @@ import {
   Platform,
 } from 'react-native';
 import { useAuth } from './AuthContext';
-import { User, Lock, Mail } from 'lucide-react-native';
+import { User, Lock, Mail, User as UserIcon } from 'lucide-react-native';
 import { useNavigation } from '@react-navigation/native';
 import type { StackNavigationProp } from '@react-navigation/stack';
 
@@ -25,13 +25,14 @@ type SignupScreenNavigationProp = StackNavigationProp<AuthStackParamList, 'Signu
 export default function SignupScreen() {
   const { signup } = useAuth();
   const navigation = useNavigation<SignupScreenNavigationProp>();
+  const [name, setName] = useState('');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [role, setRole] = useState<'customer' | 'seller'>('customer');
   const [isLoading, setIsLoading] = useState(false);
 
   const handleSignup = async () => {
-    if (!email || !password) {
+    if (!name || !email || !password) {
       Alert.alert('Error', 'Please fill in all fields');
       return;
     }
@@ -39,7 +40,7 @@ export default function SignupScreen() {
     setIsLoading(true);
 
     try {
-      const success = await signup(email, password, role);
+      const success = await signup(email, password, role, name);
       if (success) {
         Alert.alert('Success', 'Account created! Please log in.', [
           {
@@ -78,7 +79,7 @@ export default function SignupScreen() {
                 ]}
                 onPress={() => setRole('customer')}
               >
-                <User size={20} color={role === 'customer' ? '#FFFFFF' : '#6B7280'} />
+                <UserIcon size={20} color={role === 'customer' ? '#FFFFFF' : '#6B7280'} />
                 <Text style={[
                   styles.roleButtonText,
                   role === 'customer' && styles.roleButtonTextActive
@@ -94,7 +95,7 @@ export default function SignupScreen() {
                 ]}
                 onPress={() => setRole('seller')}
               >
-                <User size={20} color={role === 'seller' ? '#FFFFFF' : '#6B7280'} />
+                <UserIcon size={20} color={role === 'seller' ? '#FFFFFF' : '#6B7280'} />
                 <Text style={[
                   styles.roleButtonText,
                   role === 'seller' && styles.roleButtonTextActive
@@ -102,6 +103,18 @@ export default function SignupScreen() {
                   Seller
                 </Text>
               </TouchableOpacity>
+            </View>
+
+            <View style={styles.inputContainer}>
+              <UserIcon size={20} color="#6B7280" />
+              <TextInput
+                style={styles.input}
+                placeholder="Full Name"
+                value={name}
+                onChangeText={setName}
+                autoCapitalize="words"
+                autoComplete="name"
+              />
             </View>
 
             <View style={styles.inputContainer}>

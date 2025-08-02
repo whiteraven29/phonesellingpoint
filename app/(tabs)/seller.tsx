@@ -17,6 +17,7 @@ import { Plus, CreditCard as Edit, AlertTriangle, Package, DollarSign } from 'lu
 import * as ImagePicker from 'expo-image-picker';
 import * as FileSystem from 'expo-file-system';
 import { supabase } from '@/lib/supabase';
+import { useAuth } from '@/components/auth/AuthContext';
 
 interface Phone {
   id: string;
@@ -26,9 +27,11 @@ interface Phone {
   stock: number;
   image: string;
   description: string;
+  user_id: string;
 }
 
 export default function SellerTab() {
+  const { user, isSeller } = useAuth();
   const [phones, setPhones] = useState<Phone[]>([]);
   const [showAddModal, setShowAddModal] = useState(false);
   const [editingPhone, setEditingPhone] = useState<Phone | null>(null);
@@ -50,7 +53,11 @@ export default function SellerTab() {
   const fetchPhones = async () => {
     setLoading(true);
     try {
-      const { data, error } = await supabase.from('phones').select('*');
+      const { data, error } = await supabase
+        .from('phones')
+        .select('*')
+        .eq('user_id', user?.id || '');
+
       if (error) throw error;
       setPhones(data || []);
     } catch (error: any) {
@@ -74,11 +81,19 @@ export default function SellerTab() {
   };
 
   const openAddModal = () => {
+    if (!isSeller) {
+      Alert.alert('Permission Denied', 'Only sellers can add products');
+      return;
+    }
     resetForm();
     setShowAddModal(true);
   };
 
   const openEditModal = (phone: Phone) => {
+    if (!isSeller) {
+      Alert.alert('Permission Denied', 'Only sellers can edit products');
+      return;
+    }
     setFormData({
       name: phone.name,
       brand: phone.brand,
@@ -109,52 +124,58 @@ export default function SellerTab() {
   };
 
   const uploadImage = async (uri: string) => {
+    if (!isSeller || !user) {
+      throw new Error('Only sellers can upload images');
+    }
+
     setUploading(true);
     try {
       const fileInfo = await FileSystem.getInfoAsync(uri);
-      if (!fileInfo.exists) {
-        throw new Error('File does not exist');
+      if (!fileInfo.exists) throw new Error('File does not exist');
+      if (fileInfo.size > 5 * 1024 * 1024) {
+        throw new Error('Image must be smaller than 5MB');
       }
 
-      // Read the file as base64
-      const fileContent = await FileSystem.readAsStringAsync(uri, {
+      const fileExt = uri.split('.').pop();
+      const fileName = `${user.id}/${Date.now()}.${fileExt}`;
+
+      const base64 = await FileSystem.readAsStringAsync(uri, {
         encoding: FileSystem.EncodingType.Base64,
       });
 
-      const fileName = `phone_${Date.now()}.jpg`;
-      const filePath = `${fileName}`;
-
-      // Upload the file
-      const { data, error } = await supabase.storage
-        .from('storagephones')
-        .upload(filePath, decodeURIComponent(fileContent), {
-          contentType: 'image/jpeg',
-          upsert: true,
+      const { error } = await supabase.storage
+        .from('phone-images')
+        .upload(fileName, decodeURIComponent(base64), {
+          contentType: `image/${fileExt === 'png' ? 'png' : 'jpeg'}`,
+          upsert: false,
         });
 
       if (error) throw error;
 
-      // Get the public URL
       const { data: { publicUrl } } = supabase.storage
-        .from('storagephones')
-        .getPublicUrl(filePath);
+        .from('phone-images')
+        .getPublicUrl(fileName);
 
-      if (!publicUrl) throw new Error('Failed to get public URL');
       return publicUrl;
     } catch (error: any) {
-      console.error('Image upload error:', error);
-      Alert.alert('Upload Error', error.message || 'Failed to upload image');
-      return null;
+      console.error('Upload error:', error);
+      throw error;
     } finally {
       setUploading(false);
     }
   };
 
   const handleSave = async () => {
+    if (!isSeller || !user) {
+      Alert.alert('Permission Denied', 'Only sellers can save products');
+      return;
+    }
+
     if (!formData.name || !formData.brand || !formData.price || !formData.stock) {
       Alert.alert('Error', 'Please fill in all required fields');
       return;
     }
+
     const price = parseFloat(formData.price);
     const stock = parseInt(formData.stock);
     if (isNaN(price) || isNaN(stock)) {
@@ -168,9 +189,14 @@ export default function SellerTab() {
 
     let imageUrl = formData.image;
     if (formData.image && formData.image.startsWith('file://')) {
-      const uploadedUrl = await uploadImage(formData.image);
-      if (!uploadedUrl) return;
-      imageUrl = uploadedUrl;
+      try {
+        const uploadedUrl = await uploadImage(formData.image);
+        if (!uploadedUrl) return;
+        imageUrl = uploadedUrl;
+      } catch (error: any) {
+        Alert.alert('Upload Error', error.message);
+        return;
+      }
     }
 
     const phoneData = {
@@ -178,8 +204,9 @@ export default function SellerTab() {
       brand: formData.brand,
       price,
       stock,
-      image: imageUrl || 'https://images.pexels.com/photos/1440727/pexels-photo-1440727.jpeg?auto=compress&cs=tinysrgb&w=400',
+      image: imageUrl || 'https://via.placeholder.com/150',
       description: formData.description,
+      user_id: user.id
     };
 
     try {
@@ -187,8 +214,11 @@ export default function SellerTab() {
         const { error } = await supabase
           .from('phones')
           .update(phoneData)
-          .eq('id', editingPhone.id);
+          .eq('id', editingPhone.id)
+          .eq('user_id', user.id);
+
         if (error) throw error;
+        
         setPhones((prev) =>
           prev.map((phone) =>
             phone.id === editingPhone.id ? { ...phone, ...phoneData } : phone
@@ -196,16 +226,32 @@ export default function SellerTab() {
         );
         Alert.alert('Success', 'Phone updated successfully');
       } else {
-        const { data, error } = await supabase.from('phones').insert([phoneData]).select();
+        const { data, error } = await supabase
+          .from('phones')
+          .insert([phoneData])
+          .select();
+
         if (error) throw error;
+        
         setPhones((prev) => [...prev, { ...phoneData, id: data[0].id }]);
         Alert.alert('Success', 'Phone added successfully');
       }
+      
       setShowAddModal(false);
       resetForm();
     } catch (error: any) {
-      Alert.alert('Error', `Failed to save phone: ${error.message}`);
-      console.error('Save phone error:', error);
+      console.error('Save phone error:', {
+        message: error.message,
+        code: error.code,
+        details: error.details
+      });
+      
+      let errorMessage = error.message;
+      if (error.code === '42501') {
+        errorMessage = "You don't have permission to modify this phone";
+      }
+      
+      Alert.alert('Error', `Failed to save phone: ${errorMessage}`);
     }
   };
 
@@ -234,14 +280,20 @@ export default function SellerTab() {
     <SafeAreaView style={styles.container}>
       <View style={styles.header}>
         <Text style={styles.headerTitle}>Seller Dashboard</Text>
-        <TouchableOpacity style={styles.addButton} onPress={openAddModal}>
+        <TouchableOpacity 
+          style={[
+            styles.addButton, 
+            !isSeller && styles.disabledButton
+          ]} 
+          onPress={openAddModal}
+          disabled={!isSeller}
+        >
           <Plus size={24} color="#FFFFFF" />
           <Text style={styles.addButtonText}>Add Product</Text>
         </TouchableOpacity>
       </View>
 
       <ScrollView style={styles.content} showsVerticalScrollIndicator={false}>
-        {/* Statistics Cards */}
         <View style={styles.statsContainer}>
           <View style={styles.statCard}>
             <Package size={24} color="#2563EB" />
@@ -255,7 +307,6 @@ export default function SellerTab() {
           </View>
         </View>
 
-        {/* Alerts */}
         {(lowStockPhones.length > 0 || outOfStockPhones.length > 0) && (
           <View style={styles.alertsSection}>
             <Text style={styles.sectionTitle}>Alerts</Text>
@@ -284,14 +335,17 @@ export default function SellerTab() {
           </View>
         )}
 
-        {/* Inventory List */}
         <View style={styles.inventorySection}>
           <Text style={styles.sectionTitle}>Inventory</Text>
           {phones.length === 0 ? (
             <View style={styles.emptyContainer}>
               <Text style={styles.emptyText}>No products available</Text>
               <Text style={styles.emptySubText}>Add a product to get started!</Text>
-              <TouchableOpacity style={styles.addButton} onPress={openAddModal}>
+              <TouchableOpacity 
+                style={[styles.addButton, !isSeller && styles.disabledButton]} 
+                onPress={openAddModal}
+                disabled={!isSeller}
+              >
                 <Text style={styles.addButtonText}>Add Product</Text>
               </TouchableOpacity>
             </View>
@@ -317,8 +371,12 @@ export default function SellerTab() {
                       Stock: {phone.stock}
                     </Text>
                   </View>
-                  <TouchableOpacity style={styles.editButton} onPress={() => openEditModal(phone)}>
-                    <Edit size={20} color="#2563EB" />
+                  <TouchableOpacity 
+                    style={styles.editButton} 
+                    onPress={() => openEditModal(phone)}
+                    disabled={!isSeller}
+                  >
+                    <Edit size={20} color={isSeller ? "#2563EB" : "#9CA3AF"} />
                   </TouchableOpacity>
                 </View>
               ))}
@@ -327,7 +385,6 @@ export default function SellerTab() {
         </View>
       </ScrollView>
 
-      {/* Add/Edit Modal */}
       <Modal visible={showAddModal} animationType="slide" presentationStyle="pageSheet">
         <SafeAreaView style={styles.modalContainer}>
           <View style={styles.modalHeader}>
@@ -337,8 +394,8 @@ export default function SellerTab() {
             <Text style={styles.modalTitle}>
               {editingPhone ? 'Edit Product' : 'Add New Product'}
             </Text>
-            <TouchableOpacity onPress={handleSave} disabled={uploading || loading}>
-              <Text style={[styles.saveText, (uploading || loading) && styles.disabledText]}>
+            <TouchableOpacity onPress={handleSave} disabled={uploading || loading || !isSeller}>
+              <Text style={[styles.saveText, (uploading || loading || !isSeller) && styles.disabledText]}>
                 {uploading ? 'Uploading...' : loading ? 'Saving...' : 'Save'}
               </Text>
             </TouchableOpacity>
@@ -352,6 +409,7 @@ export default function SellerTab() {
                 onChangeText={(text) => setFormData((prev) => ({ ...prev, name: text }))}
                 placeholder="Enter phone name"
                 autoCapitalize="words"
+                editable={isSeller}
               />
             </View>
             <View style={styles.inputGroup}>
@@ -362,6 +420,7 @@ export default function SellerTab() {
                 onChangeText={(text) => setFormData((prev) => ({ ...prev, brand: text }))}
                 placeholder="Enter brand name"
                 autoCapitalize="words"
+                editable={isSeller}
               />
             </View>
             <View style={styles.inputGroup}>
@@ -372,6 +431,7 @@ export default function SellerTab() {
                 onChangeText={(text) => setFormData((prev) => ({ ...prev, price: text }))}
                 placeholder="Enter price (e.g., 999.99)"
                 keyboardType="decimal-pad"
+                editable={isSeller}
               />
             </View>
             <View style={styles.inputGroup}>
@@ -382,6 +442,7 @@ export default function SellerTab() {
                 onChangeText={(text) => setFormData((prev) => ({ ...prev, stock: text }))}
                 placeholder="Enter stock quantity"
                 keyboardType="number-pad"
+                editable={isSeller}
               />
             </View>
             <View style={styles.inputGroup}>
@@ -398,9 +459,9 @@ export default function SellerTab() {
                   </View>
                 )}
                 <TouchableOpacity
-                  style={[styles.uploadButton, uploading && styles.disabledButton]}
+                  style={[styles.uploadButton, (uploading || !isSeller) && styles.disabledButton]}
                   onPress={handlePickImage}
-                  disabled={uploading}
+                  disabled={uploading || !isSeller}
                 >
                   <Text style={styles.uploadButtonText}>
                     {uploading ? 'Uploading...' : 'Upload Image'}
@@ -417,6 +478,7 @@ export default function SellerTab() {
                 placeholder="Enter product description"
                 multiline
                 numberOfLines={4}
+                editable={isSeller}
               />
             </View>
           </ScrollView>
@@ -467,6 +529,9 @@ const styles = StyleSheet.create({
     fontWeight: '600',
     fontSize: 16,
     marginLeft: 8,
+  },
+  disabledButton: {
+    backgroundColor: '#9CA3AF',
   },
   content: {
     flex: 1,
@@ -683,9 +748,6 @@ const styles = StyleSheet.create({
     borderRadius: 8,
     paddingVertical: 8,
     paddingHorizontal: 16,
-  },
-  disabledButton: {
-    backgroundColor: '#9CA3AF',
   },
   uploadButtonText: {
     color: '#FFFFFF',

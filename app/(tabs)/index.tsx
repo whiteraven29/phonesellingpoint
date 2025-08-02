@@ -10,10 +10,12 @@ import {
   SafeAreaView,
   Alert,
   Dimensions,
+  ActivityIndicator,
 } from 'react-native';
-import { Search, ShoppingCart, Filter, Star, LogOut, ChevronDown } from 'lucide-react-native';
+import { Search, ShoppingCart, Star, LogOut } from 'lucide-react-native';
 import { useRouter } from 'expo-router';
 import { useAuth } from '@/components/auth/AuthContext';
+import { supabase } from '@/lib/supabase';
 
 interface Phone {
   id: string;
@@ -33,76 +35,33 @@ export default function BrowseTab() {
   const [selectedBrand, setSelectedBrand] = useState('All');
   const [sortOption, setSortOption] = useState('default');
   const [cart, setCart] = useState<{ [key: string]: number }>({});
+  const [loading, setLoading] = useState(true);
   const router = useRouter();
   const { signout } = useAuth();
 
   useEffect(() => {
-    // Mock data - in real app this would come from Supabase
-    const mockPhones: Phone[] = [
-      {
-        id: '1',
-        name: 'iPhone 15 Pro',
-        brand: 'Apple',
-        price: 999,
-        stock: 15,
-        image: 'https://images.pexels.com/photos/699122/pexels-photo-699122.jpeg?auto=compress&cs=tinysrgb&w=400',
-        rating: 4.8,
-        description: 'Latest iPhone with A17 Pro chip and titanium design',
-      },
-      {
-        id: '2',
-        name: 'Galaxy S24 Ultra',
-        brand: 'Samsung',
-        price: 1199,
-        stock: 8,
-        image: 'https://images.pexels.com/photos/1092644/pexels-photo-1092644.jpeg?auto=compress&cs=tinysrgb&w=400',
-        rating: 4.7,
-        description: 'Premium Android phone with S Pen and 200MP camera',
-      },
-      {
-        id: '3',
-        name: 'Pixel 8 Pro',
-        brand: 'Google',
-        price: 899,
-        stock: 12,
-        image: 'https://images.pexels.com/photos/3693601/pexels-photo-3693601.jpeg?auto=compress&cs=tinysrgb&w=400',
-        rating: 4.6,
-        description: 'Pure Android experience with advanced AI features',
-      },
-      {
-        id: '4',
-        name: 'OnePlus 12',
-        brand: 'OnePlus',
-        price: 799,
-        stock: 20,
-        image: 'https://images.pexels.com/photos/1440722/pexels-photo-1440722.jpeg?auto=compress&cs=tinysrgb&w=400',
-        rating: 4.5,
-        description: 'Flagship killer with fast charging and premium design',
-      },
-      {
-        id: '5',
-        name: 'Xperia 1 V',
-        brand: 'Sony',
-        price: 1099,
-        stock: 10,
-        image: 'https://images.pexels.com/photos/404280/pexels-photo-404280.jpeg?auto=compress&cs=tinysrgb&w=400',
-        rating: 4.4,
-        description: 'Sony flagship with 4K OLED display and pro camera features',
-      },
-      {
-        id: '6',
-        name: 'Aquos R7',
-        brand: 'Aquos',
-        price: 950,
-        stock: 7,
-        image: 'https://images.pexels.com/photos/325153/pexels-photo-325153.jpeg?auto=compress&cs=tinysrgb&w=400',
-        rating: 4.3,
-        description: 'Aquos R7 with IGZO OLED and Leica camera',
-      },
-    ];
-    setPhones(mockPhones);
-    setFilteredPhones(mockPhones);
+    fetchPhones();
   }, []);
+
+  const fetchPhones = async () => {
+    setLoading(true);
+    try {
+      const { data, error } = await supabase
+        .from('phones')
+        .select('*')
+        .gte('stock', 1); // Only fetch phones with stock > 0
+
+      if (error) throw error;
+      
+      setPhones(data || []);
+      setFilteredPhones(data || []);
+    } catch (error: any) {
+      Alert.alert('Error', `Failed to fetch phones: ${error.message}`);
+      console.error('Fetch phones error:', error);
+    } finally {
+      setLoading(false);
+    }
+  };
 
   useEffect(() => {
     filterAndSortPhones();
@@ -134,7 +93,7 @@ export default function BrowseTab() {
     setFilteredPhones(filtered);
   };
 
-  const addToCart = (phoneId: string) => {
+  const addToCart = async (phoneId: string) => {
     const phone = phones.find((p) => p.id === phoneId);
     if (!phone) return;
 
@@ -144,11 +103,28 @@ export default function BrowseTab() {
       return;
     }
 
-    setCart((prev) => ({
-      ...prev,
-      [phoneId]: currentCartQuantity + 1,
-    }));
-    Alert.alert('Added to Cart', `${phone.name} added to cart`);
+    try {
+      // Check stock again in database to prevent race conditions
+      const { data: currentStock } = await supabase
+        .from('phones')
+        .select('stock')
+        .eq('id', phoneId)
+        .single();
+
+      if (!currentStock || currentCartQuantity >= currentStock.stock) {
+        Alert.alert('Stock Updated', 'This item is no longer available in the requested quantity');
+        await fetchPhones(); // Refresh stock data
+        return;
+      }
+
+      setCart((prev) => ({
+        ...prev,
+        [phoneId]: currentCartQuantity + 1,
+      }));
+      Alert.alert('Added to Cart', `${phone.name} added to cart`);
+    } catch (error: any) {
+      Alert.alert('Error', `Failed to add to cart: ${error.message}`);
+    }
   };
 
   const brands = ['All', ...Array.from(new Set(phones.map((phone) => phone.brand)))];
@@ -163,6 +139,20 @@ export default function BrowseTab() {
     { label: 'Price: High to Low', value: 'priceHigh' },
     { label: 'Rating', value: 'rating' },
   ];
+
+  if (loading) {
+    return (
+      <SafeAreaView style={styles.container}>
+        <View style={styles.header}>
+          <Text style={styles.headerTitle}>Phone Store</Text>
+        </View>
+        <View style={styles.loadingContainer}>
+          <ActivityIndicator size="large" color="#2563EB" />
+          <Text style={styles.loadingText}>Loading phones...</Text>
+        </View>
+      </SafeAreaView>
+    );
+  }
 
   return (
     <SafeAreaView style={styles.container}>
@@ -437,6 +427,16 @@ const styles = StyleSheet.create({
   content: {
     flex: 1,
     padding: 16,
+  },
+  loadingContainer: {
+    flex: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  loadingText: {
+    marginTop: 16,
+    fontSize: 16,
+    color: '#6B7280',
   },
   emptyContainer: {
     flex: 1,
