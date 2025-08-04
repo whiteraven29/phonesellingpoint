@@ -11,20 +11,12 @@ import {
   Platform,
 } from 'react-native';
 import { useAuth } from './AuthContext';
-import { User, Lock, Mail, User as UserIcon } from 'lucide-react-native';
-import { useNavigation } from '@react-navigation/native';
-import type { StackNavigationProp } from '@react-navigation/stack';
-
-type AuthStackParamList = {
-  Login: undefined;
-  Signup: undefined;
-};
-
-type SignupScreenNavigationProp = StackNavigationProp<AuthStackParamList, 'Signup'>;
+import { User as UserIcon, Mail, Lock } from 'lucide-react-native';
+import { useRouter } from 'expo-router';
 
 export default function SignupScreen() {
   const { signup } = useAuth();
-  const navigation = useNavigation<SignupScreenNavigationProp>();
+  const router = useRouter();
   const [name, setName] = useState('');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
@@ -40,12 +32,12 @@ export default function SignupScreen() {
     setIsLoading(true);
 
     try {
-      const success = await signup(email, password, role, name);
+      const success = await signup(name,email, password, role);
       if (success) {
-        Alert.alert('Success', 'Account created! Please log in.', [
+        Alert.alert('Success', 'Account created! Please verify your email and log in.', [
           {
             text: 'OK',
-            onPress: () => navigation.navigate('Login'),
+            onPress: () => router.replace('/Login'),
           },
         ]);
       } else {
@@ -109,11 +101,11 @@ export default function SignupScreen() {
               <UserIcon size={20} color="#6B7280" />
               <TextInput
                 style={styles.input}
-                placeholder="Full Name"
+                placeholder="Username"
                 value={name}
                 onChangeText={setName}
-                autoCapitalize="words"
-                autoComplete="name"
+                autoCapitalize="none"
+                autoComplete="username"
               />
             </View>
 
@@ -121,7 +113,7 @@ export default function SignupScreen() {
               <Mail size={20} color="#6B7280" />
               <TextInput
                 style={styles.input}
-                placeholder="Email address"
+                placeholder="Email (for verification)"
                 value={email}
                 onChangeText={setEmail}
                 keyboardType="email-address"
@@ -154,9 +146,9 @@ export default function SignupScreen() {
           </View>
 
           <View style={styles.footer}>
-            <TouchableOpacity onPress={() => navigation.navigate('Login')}>
+            <TouchableOpacity onPress={() => router.navigate('/Login')}>
               <Text style={styles.footerText}>
-                Already have an account? Go to Sign In
+                Already have an account? Sign In
               </Text>
             </TouchableOpacity>
           </View>
@@ -165,6 +157,7 @@ export default function SignupScreen() {
     </SafeAreaView>
   );
 }
+
 
 const styles = StyleSheet.create({
   container: {

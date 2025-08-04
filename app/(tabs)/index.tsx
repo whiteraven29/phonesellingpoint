@@ -34,14 +34,17 @@ export default function BrowseTab() {
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedBrand, setSelectedBrand] = useState('All');
   const [sortOption, setSortOption] = useState('default');
-  const [cart, setCart] = useState<{ [key: string]: number }>({});
+  const [cartCount, setCartCount] = useState(0);
   const [loading, setLoading] = useState(true);
   const router = useRouter();
-  const { signout } = useAuth();
+  const { user, signout } = useAuth();
 
   useEffect(() => {
     fetchPhones();
-  }, []);
+    if (user) {
+      fetchCartCount();
+    }
+  }, [user]);
 
   const fetchPhones = async () => {
     setLoading(true);
@@ -49,7 +52,7 @@ export default function BrowseTab() {
       const { data, error } = await supabase
         .from('phones')
         .select('*')
-        .gte('stock', 1); // Only fetch phones with stock > 0
+        .gte('stock', 1);
 
       if (error) throw error;
       
@@ -57,15 +60,25 @@ export default function BrowseTab() {
       setFilteredPhones(data || []);
     } catch (error: any) {
       Alert.alert('Error', `Failed to fetch phones: ${error.message}`);
-      console.error('Fetch phones error:', error);
     } finally {
       setLoading(false);
     }
   };
 
-  useEffect(() => {
-    filterAndSortPhones();
-  }, [searchQuery, selectedBrand, sortOption, phones]);
+  const fetchCartCount = async () => {
+    try {
+      const { count, error } = await supabase
+        .from('cart_items')
+        .select('*', { count: 'exact' })
+        .eq('user_id', user?.id || '');
+
+      if (error) throw error;
+      
+      setCartCount(count || 0);
+    } catch (error) {
+      console.error('Failed to fetch cart count:', error);
+    }
+  };
 
   const filterAndSortPhones = () => {
     let filtered = [...phones];
@@ -94,44 +107,66 @@ export default function BrowseTab() {
   };
 
   const addToCart = async (phoneId: string) => {
-    const phone = phones.find((p) => p.id === phoneId);
-    if (!phone) return;
-
-    const currentCartQuantity = cart[phoneId] || 0;
-    if (currentCartQuantity >= phone.stock) {
-      Alert.alert('Out of Stock', 'Cannot add more items than available in stock');
+    if (!user) {
+      Alert.alert('Login Required', 'Please login to add items to cart');
+      router.push('/Login');
       return;
     }
 
     try {
-      // Check stock again in database to prevent race conditions
-      const { data: currentStock } = await supabase
+      const { data: phone, error: phoneError } = await supabase
         .from('phones')
         .select('stock')
         .eq('id', phoneId)
         .single();
 
-      if (!currentStock || currentCartQuantity >= currentStock.stock) {
-        Alert.alert('Stock Updated', 'This item is no longer available in the requested quantity');
-        await fetchPhones(); // Refresh stock data
+      if (phoneError || !phone) throw phoneError || new Error('Phone not found');
+
+      const { data: existingItem, error: cartError } = await supabase
+        .from('cart_items')
+        .select('quantity')
+        .eq('user_id', user.id)
+        .eq('phone_id', phoneId)
+        .single();
+
+      const currentQuantity = existingItem?.quantity || 0;
+      if (currentQuantity >= phone.stock) {
+        Alert.alert('Out of Stock', 'Cannot add more items than available in stock');
         return;
       }
 
-      setCart((prev) => ({
-        ...prev,
-        [phoneId]: currentCartQuantity + 1,
-      }));
-      Alert.alert('Added to Cart', `${phone.name} added to cart`);
+      if (existingItem) {
+        const { error } = await supabase
+          .from('cart_items')
+          .update({ quantity: currentQuantity + 1 })
+          .eq('user_id', user.id)
+          .eq('phone_id', phoneId);
+
+        if (error) throw error;
+      } else {
+        const { error } = await supabase
+          .from('cart_items')
+          .insert({
+            user_id: user.id,
+            phone_id: phoneId,
+            quantity: 1
+          });
+
+        if (error) throw error;
+      }
+
+      Alert.alert('Success', 'Item added to cart');
+      fetchCartCount();
     } catch (error: any) {
       Alert.alert('Error', `Failed to add to cart: ${error.message}`);
     }
   };
 
-  const brands = ['All', ...Array.from(new Set(phones.map((phone) => phone.brand)))];
+  useEffect(() => {
+    filterAndSortPhones();
+  }, [searchQuery, selectedBrand, sortOption, phones]);
 
-  const getTotalCartItems = () => {
-    return Object.values(cart).reduce((sum, quantity) => sum + quantity, 0);
-  };
+  const brands = ['All', ...Array.from(new Set(phones.map((phone) => phone.brand)))];
 
   const sortOptions = [
     { label: 'Default', value: 'default' },
@@ -159,11 +194,14 @@ export default function BrowseTab() {
       <View style={styles.header}>
         <Text style={styles.headerTitle}>Phone Store</Text>
         <View style={styles.headerButtons}>
-          <TouchableOpacity style={styles.cartButton} onPress={() => router.push('/cart')}>
+          <TouchableOpacity 
+            style={styles.cartButton} 
+            onPress={() => router.push('/cart')}
+          >
             <ShoppingCart size={24} color="#2563EB" />
-            {getTotalCartItems() > 0 && (
+            {cartCount > 0 && (
               <View style={styles.cartBadge}>
-                <Text style={styles.cartBadgeText}>{getTotalCartItems()}</Text>
+                <Text style={styles.cartBadgeText}>{cartCount}</Text>
               </View>
             )}
           </TouchableOpacity>

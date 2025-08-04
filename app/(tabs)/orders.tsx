@@ -7,94 +7,122 @@ import {
   TouchableOpacity,
   SafeAreaView,
   Alert,
+  ActivityIndicator,
 } from 'react-native';
 import { Clock, CircleCheck as CheckCircle, Circle as XCircle, User, Phone } from 'lucide-react-native';
+import { useRouter } from 'expo-router';
+import { useAuth } from '@/components/auth/AuthContext';
+import { supabase } from '@/lib/supabase';
+
+interface OrderItem {
+  id: string;
+  phone_id: string;
+  phone_name: string;
+  quantity: number;
+  price: number;
+}
 
 interface Order {
   id: string;
-  customerName: string;
-  customerPhone: string;
-  customerEmail: string;
-  items: {
-    phoneId: string;
-    phoneName: string;
-    quantity: number;
-    price: number;
-  }[];
-  totalAmount: number;
+  user_id: string;
+  customer_name: string;
+  customer_phone: string;
+  customer_email: string;
+  total_amount: number;
   status: 'pending' | 'confirmed' | 'rejected' | 'fulfilled';
-  orderDate: Date;
+  created_at: string;
+  order_items: OrderItem[];
+  user_profile?: {
+    username: string;
+    email: string;
+  };
 }
 
 export default function OrdersTab() {
   const [orders, setOrders] = useState<Order[]>([]);
   const [filter, setFilter] = useState<'all' | 'pending' | 'confirmed' | 'fulfilled' | 'rejected'>('all');
+  const [loading, setLoading] = useState(true);
+  const [updating, setUpdating] = useState(false);
+  const router = useRouter();
+  const { user } = useAuth();
 
   useEffect(() => {
-    // Mock data - in real app this would come from Supabase
-    const mockOrders: Order[] = [
-      {
-        id: '1',
-        customerName: 'John Doe',
-        customerPhone: '+1 234 567 8900',
-        customerEmail: 'john@example.com',
-        items: [
-          {
-            phoneId: '1',
-            phoneName: 'iPhone 15 Pro',
-            quantity: 1,
-            price: 999,
-          }
-        ],
-        totalAmount: 999,
-        status: 'pending',
-        orderDate: new Date('2024-01-15'),
-      },
-      {
-        id: '2',
-        customerName: 'Jane Smith',
-        customerPhone: '+1 234 567 8901',
-        customerEmail: 'jane@example.com',
-        items: [
-          {
-            phoneId: '2',
-            phoneName: 'Galaxy S24 Ultra',
-            quantity: 2,
-            price: 1199,
-          }
-        ],
-        totalAmount: 2398,
-        status: 'confirmed',
-        orderDate: new Date('2024-01-14'),
-      },
-      {
-        id: '3',
-        customerName: 'Mike Johnson',
-        customerPhone: '+1 234 567 8902',
-        customerEmail: 'mike@example.com',
-        items: [
-          {
-            phoneId: '3',
-            phoneName: 'Pixel 8 Pro',
-            quantity: 1,
-            price: 899,
-          }
-        ],
-        totalAmount: 899,
-        status: 'fulfilled',
-        orderDate: new Date('2024-01-13'),
-      },
-    ];
-    setOrders(mockOrders);
-  }, []);
+    if (user) {
+      fetchOrders();
+    }
+  }, [user, filter]);
 
-  const updateOrderStatus = (orderId: string, newStatus: Order['status']) => {
-    setOrders(prev => prev.map(order => 
-      order.id === orderId ? { ...order, status: newStatus } : order
-    ));
-    
-    const statusText = newStatus.charAt(0).toUpperCase() + newStatus.slice(1);
-    Alert.alert('Success', `Order ${statusText} successfully`);
+  const fetchOrders = async () => {
+    setLoading(true);
+    try {
+      let query = supabase
+        .from('orders')
+        .select(`
+          id,
+          user_id,
+          customer_name,
+          customer_phone,
+          customer_email,
+          total_amount,
+          status,
+          created_at,
+          order_items:order_items(
+            id,
+            phone_id,
+            phone_name,
+            quantity,
+            price
+          ),
+          user:profiles(
+            username,
+            email
+          )
+        `)
+        .order('created_at', { ascending: false });
+
+      // Apply filter if not 'all'
+      if (filter !== 'all') {
+        query = query.eq('status', filter);
+      }
+
+      // For customers, only show their own orders
+      if (user?.user_metadata?.role !== 'seller') {
+        query = query.eq('user_id', user?.id || '');
+      }
+
+      const { data, error } = await query;
+
+      if (error) throw error;
+      
+      setOrders(data as Order[] || []);
+    } catch (error: any) {
+      Alert.alert('Error', `Failed to fetch orders: ${error.message}`);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const updateOrderStatus = async (orderId: string, newStatus: Order['status']) => {
+    setUpdating(true);
+    try {
+      const { error } = await supabase
+        .from('orders')
+        .update({ status: newStatus })
+        .eq('id', orderId);
+
+      if (error) throw error;
+
+      setOrders(prev => prev.map(order => 
+        order.id === orderId ? { ...order, status: newStatus } : order
+      ));
+      
+      const statusText = newStatus.charAt(0).toUpperCase() + newStatus.slice(1);
+      Alert.alert('Success', `Order ${statusText} successfully`);
+    } catch (error: any) {
+      Alert.alert('Error', `Failed to update order: ${error.message}`);
+    } finally {
+      setUpdating(false);
+    }
   };
 
   const getFilteredOrders = () => {
@@ -134,11 +162,28 @@ export default function OrdersTab() {
 
   const filteredOrders = getFilteredOrders();
   const filterOptions = ['all', 'pending', 'confirmed', 'fulfilled', 'rejected'];
+  const isSeller = user?.user_metadata?.role === 'seller';
+
+  if (loading) {
+    return (
+      <SafeAreaView style={styles.container}>
+        <View style={styles.header}>
+          <Text style={styles.headerTitle}>Order Management</Text>
+        </View>
+        <View style={styles.loadingContainer}>
+          <ActivityIndicator size="large" color="#2563EB" />
+          <Text style={styles.loadingText}>Loading orders...</Text>
+        </View>
+      </SafeAreaView>
+    );
+  }
 
   return (
     <SafeAreaView style={styles.container}>
       <View style={styles.header}>
-        <Text style={styles.headerTitle}>Order Management</Text>
+        <Text style={styles.headerTitle}>
+          {isSeller ? 'Order Management' : 'My Orders'}
+        </Text>
       </View>
 
       {/* Filter Tabs */}
@@ -174,9 +219,9 @@ export default function OrdersTab() {
             <View key={order.id} style={styles.orderCard}>
               <View style={styles.orderHeader}>
                 <View style={styles.orderInfo}>
-                  <Text style={styles.orderId}>Order #{order.id}</Text>
+                  <Text style={styles.orderId}>Order #{order.id.slice(0, 8)}</Text>
                   <Text style={styles.orderDate}>
-                    {order.orderDate.toLocaleDateString()}
+                    {new Date(order.created_at).toLocaleDateString()}
                   </Text>
                 </View>
                 <View style={styles.statusContainer}>
@@ -187,24 +232,28 @@ export default function OrdersTab() {
                 </View>
               </View>
 
-              <View style={styles.customerInfo}>
-                <View style={styles.customerRow}>
-                  <User size={16} color="#6B7280" />
-                  <Text style={styles.customerText}>{order.customerName}</Text>
+              {isSeller && (
+                <View style={styles.customerInfo}>
+                  <View style={styles.customerRow}>
+                    <User size={16} color="#6B7280" />
+                    <Text style={styles.customerText}>
+                      {order.customer_name} ({order.user_profile?.email || order.customer_email})
+                    </Text>
+                  </View>
+                  <View style={styles.customerRow}>
+                    <Phone size={16} color="#6B7280" />
+                    <Text style={styles.customerText}>{order.customer_phone}</Text>
+                  </View>
                 </View>
-                <View style={styles.customerRow}>
-                  <Phone size={16} color="#6B7280" />
-                  <Text style={styles.customerText}>{order.customerPhone}</Text>
-                </View>
-              </View>
+              )}
 
               <View style={styles.itemsContainer}>
                 <Text style={styles.itemsTitle}>Items:</Text>
-                {order.items.map((item, index) => (
+                {order.order_items.map((item, index) => (
                   <View key={index} style={styles.itemRow}>
-                    <Text style={styles.itemName}>{item.phoneName}</Text>
+                    <Text style={styles.itemName}>{item.phone_name}</Text>
                     <Text style={styles.itemDetails}>
-                      {item.quantity}x ${item.price}
+                      {item.quantity}x ${item.price.toFixed(2)}
                     </Text>
                   </View>
                 ))}
@@ -212,31 +261,34 @@ export default function OrdersTab() {
 
               <View style={styles.totalRow}>
                 <Text style={styles.totalLabel}>Total Amount:</Text>
-                <Text style={styles.totalAmount}>${order.totalAmount}</Text>
+                <Text style={styles.totalAmount}>${order.total_amount.toFixed(2)}</Text>
               </View>
 
-              {order.status === 'pending' && (
+              {isSeller && order.status === 'pending' && (
                 <View style={styles.actionButtons}>
                   <TouchableOpacity
                     style={[styles.actionButton, styles.confirmButton]}
                     onPress={() => updateOrderStatus(order.id, 'confirmed')}
+                    disabled={updating}
                   >
                     <Text style={styles.confirmButtonText}>Confirm</Text>
                   </TouchableOpacity>
                   <TouchableOpacity
                     style={[styles.actionButton, styles.rejectButton]}
                     onPress={() => updateOrderStatus(order.id, 'rejected')}
+                    disabled={updating}
                   >
                     <Text style={styles.rejectButtonText}>Reject</Text>
                   </TouchableOpacity>
                 </View>
               )}
 
-              {order.status === 'confirmed' && (
+              {isSeller && order.status === 'confirmed' && (
                 <View style={styles.actionButtons}>
                   <TouchableOpacity
                     style={[styles.actionButton, styles.fulfillButton]}
                     onPress={() => updateOrderStatus(order.id, 'fulfilled')}
+                    disabled={updating}
                   >
                     <Text style={styles.fulfillButtonText}>Mark as Fulfilled</Text>
                   </TouchableOpacity>

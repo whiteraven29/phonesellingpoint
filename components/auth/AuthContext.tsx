@@ -4,16 +4,16 @@ import { supabase } from '@/lib/supabase';
 interface User {
   id: string;
   email: string;
+  name: string; // This will serve as username
   role: 'customer' | 'seller';
-  name: string | null;
 }
 
 export type AuthContextType = {
   user: User | null;
   isSeller: boolean;
-  signin: (email: string, password: string) => Promise<boolean>;
+  signin: (username: string, password: string) => Promise<boolean>;
   signout: () => Promise<void>;
-  signup: (email: string, password: string, role: 'customer' | 'seller', name: string) => Promise<boolean>;
+  signup: (username: string, email: string, password: string, role: 'customer' | 'seller') => Promise<boolean>;
   isLoading: boolean;
 };
 
@@ -31,7 +31,6 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [isLoading, setIsLoading] = useState(true);
   const isSeller = user?.role === 'seller';
 
-  // Load session on mount
   useEffect(() => {
     const getSession = async () => {
       setIsLoading(true);
@@ -50,7 +49,6 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     };
     getSession();
 
-    // Listen for auth state changes
     const { data: { subscription } } = supabase.auth.onAuthStateChange(async (event, session) => {
       if (session?.user) {
         await fetchProfile(session.user.id);
@@ -59,72 +57,84 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       }
     });
 
-    return () => {
-      subscription.unsubscribe();
-    };
+    return () => subscription.unsubscribe();
   }, []);
 
-  // Fetch user profile from "profiles" table
   const fetchProfile = async (id: string) => {
-    try {
-      const { data, error } = await supabase
-        .from('profiles')
-        .select('id, email, role, name')
-        .eq('id', id)
-        .maybeSingle(); // Changed from single() to maybeSingle()
+  try {
+    const { data, error } = await supabase
+      .from('profiles')
+      .select('id, email, name, role')
+      .eq('id', id)
+      .maybeSingle();
+    
+    if (error) throw error;
+    
+    if (data) {
+      setUser(data as User);
+    } else {
+      const { data: authData, error: authError } = await supabase.auth.getUser();
+      if (authError) throw authError;
       
-      if (error) throw error;
-      
-      if (data) {
-        setUser(data as User);
-      } else {
-        // If no profile exists, create one
-        const { data: authData } = await supabase.auth.getUser();
-        if (authData.user) {
-          const { error: upsertError } = await supabase
-            .from('profiles')
-            .upsert({
-              id: authData.user.id,
-              email: authData.user.email,
-              role: 'customer',
-              name: authData.user.user_metadata?.name || null,
-              updated_at: new Date().toISOString()
-            });
-          
-          if (upsertError) throw upsertError;
-          
-          // Fetch the newly created profile
-          const { data: newProfile } = await supabase
-            .from('profiles')
-            .select('id, email, role, name')
-            .eq('id', id)
-            .single();
-            
-          setUser(newProfile as User);
-        } else {
-          setUser(null);
+      if (authData.user) {
+        // Handle potential undefined email
+        const userEmail = authData.user.email;
+        if (!userEmail) {
+          throw new Error('User email is missing');
         }
-      }
-    } catch (error) {
-      console.error('Error fetching profile:', {
-        message: error.message,
-        code: error.code,
-        details: error.details
-      });
-      setUser(null);
-    }
-  };
 
-  // Sign in
-  const signin = async (email: string, password: string) => {
+        const { error: upsertError } = await supabase
+          .from('profiles')
+          .upsert({
+            id: authData.user.id,
+            email: userEmail,
+            name: authData.user.user_metadata?.name || userEmail.split('@')[0],
+            role: 'customer',
+            updated_at: new Date().toISOString()
+          });
+        
+        if (upsertError) throw upsertError;
+        
+        const { data: newProfile, error: profileError } = await supabase
+          .from('profiles')
+          .select('id, email, name, role')
+          .eq('id', id)
+          .single();
+          
+        if (profileError) throw profileError;
+        
+        setUser(newProfile as User);
+      } else {
+        setUser(null);
+      }
+    }
+  } catch (error) {
+    console.error('Error fetching profile:', error);
+    setUser(null);
+  }
+};
+
+  const signin = async (username: string, password: string) => {
     setIsLoading(true);
     try {
-      const { data, error } = await supabase.auth.signInWithPassword({ email, password });
-      if (error) throw error;
-      
-      if (!data.user) {
-        return false;
+      // First get the email associated with the username (name field)
+      const { data: profileData, error: profileError } = await supabase
+        .from('profiles')
+        .select('email')
+        .eq('name', username)
+        .maybeSingle();
+
+      if (profileError || !profileData) {
+        throw new Error('Invalid username or password');
       }
+
+      // Then sign in with email and password
+      const { data, error } = await supabase.auth.signInWithPassword({
+        email: profileData.email,
+        password
+      });
+
+      if (error || !data.user) throw error || new Error('Sign in failed');
       
       await fetchProfile(data.user.id);
       return true;
@@ -136,62 +146,55 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     }
   };
 
-  // Sign up
-  const signup = async (email: string, password: string, role: 'customer' | 'seller', name: string) => {
+  const signup = async (username: string, email: string, password: string, role: 'customer' | 'seller') => {
     setIsLoading(true);
     try {
-      // 1. Sign up the user with Supabase Auth
+      // Check if username (name) already exists
+      const { data: existingUser, error: usernameError } = await supabase
+        .from('profiles')
+        .select('name')
+        .eq('name', username)
+        .maybeSingle();
+
+      if (usernameError) throw usernameError;
+      if (existingUser) throw new Error('Username already exists');
+
+      // Create auth user
       const { data, error } = await supabase.auth.signUp({ 
         email, 
         password,
         options: {
           data: {
-            name,
+            name: username,
             role
           }
         }
       });
 
-      if (error) throw error;
-      
-      if (!data.user) {
-        return false;
-      }
+      if (error || !data.user) throw error || new Error('Signup failed');
 
-      // 2. Get the session to ensure we have a valid JWT
-      const { data: sessionData, error: sessionError } = await supabase.auth.getSession();
-      if (sessionError) throw sessionError;
-      if (!sessionData.session) throw new Error('No session created');
-
-      // 3. Insert profile data into the profiles table
+      // Create profile
       const { error: profileError } = await supabase
         .from('profiles')
         .upsert({
-          id: data.user.id, 
-          email, 
+          id: data.user.id,
+          email,
+          name: username,
           role,
-          name,
           updated_at: new Date().toISOString()
         });
 
       if (profileError) throw profileError;
 
-      // 4. Fetch the newly created profile
-      await fetchProfile(data.user.id);
       return true;
     } catch (error) {
-      console.error('Signup error:', {
-        message: error.message,
-        code: error.code,
-        details: error.details
-      });
+      console.error('Signup error:', error);
       return false;
     } finally {
       setIsLoading(false);
     }
   };
 
-  // Sign out
   const signout = async () => {
     setIsLoading(true);
     try {

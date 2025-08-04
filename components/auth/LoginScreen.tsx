@@ -11,19 +11,18 @@ import {
   Platform,
 } from 'react-native';
 import { useAuth } from './AuthContext';
-import { User, Lock, Mail } from 'lucide-react-native';
+import { User as UserIcon, Lock } from 'lucide-react-native';
 import { useRouter } from 'expo-router';
 
 export default function LoginScreen() {
   const { signin } = useAuth();
   const router = useRouter();
-  const [email, setEmail] = useState('');
+  const [name, setName] = useState('');
   const [password, setPassword] = useState('');
-  const [role, setRole] = useState<'customer' | 'seller'>('customer');
   const [isLoading, setIsLoading] = useState(false);
 
   const handleLogin = async () => {
-    if (!email || !password) {
+    if (!name || !password) {
       Alert.alert('Error', 'Please fill in all fields');
       return;
     }
@@ -31,7 +30,7 @@ export default function LoginScreen() {
     setIsLoading(true);
 
     try {
-      const success = await signin(email, password);
+      const success = await signin(name, password);
       if (success) {
         router.replace('/'); // Go to home tab after login
       } else {
@@ -57,50 +56,15 @@ export default function LoginScreen() {
           </View>
 
           <View style={styles.form}>
-            <View style={styles.roleSelector}>
-              <TouchableOpacity
-                style={[
-                  styles.roleButton,
-                  role === 'customer' && styles.roleButtonActive
-                ]}
-                onPress={() => setRole('customer')}
-              >
-                <User size={20} color={role === 'customer' ? '#FFFFFF' : '#6B7280'} />
-                <Text style={[
-                  styles.roleButtonText,
-                  role === 'customer' && styles.roleButtonTextActive
-                ]}>
-                  Customer
-                </Text>
-              </TouchableOpacity>
-              
-              <TouchableOpacity
-                style={[
-                  styles.roleButton,
-                  role === 'seller' && styles.roleButtonActive
-                ]}
-                onPress={() => setRole('seller')}
-              >
-                <User size={20} color={role === 'seller' ? '#FFFFFF' : '#6B7280'} />
-                <Text style={[
-                  styles.roleButtonText,
-                  role === 'seller' && styles.roleButtonTextActive
-                ]}>
-                  Seller
-                </Text>
-              </TouchableOpacity>
-            </View>
-
             <View style={styles.inputContainer}>
-              <Mail size={20} color="#6B7280" />
+              <UserIcon size={20} color="#6B7280" />
               <TextInput
                 style={styles.input}
-                placeholder="Email address"
-                value={email}
-                onChangeText={setEmail}
-                keyboardType="email-address"
+                placeholder="Username"
+                value={name}
+                onChangeText={setName}
                 autoCapitalize="none"
-                autoComplete="email"
+                autoComplete="username"
               />
             </View>
 
@@ -168,33 +132,6 @@ const styles = StyleSheet.create({
   form: {
     marginBottom: 32,
   },
-  roleSelector: {
-    flexDirection: 'row',
-    marginBottom: 24,
-    backgroundColor: '#F3F4F6',
-    borderRadius: 12,
-    padding: 4,
-  },
-  roleButton: {
-    flex: 1,
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    paddingVertical: 12,
-    borderRadius: 8,
-  },
-  roleButtonActive: {
-    backgroundColor: '#3B82F6',
-  },
-  roleButtonText: {
-    fontSize: 16,
-    fontWeight: '500',
-    color: '#6B7280',
-    marginLeft: 8,
-  },
-  roleButtonTextActive: {
-    color: '#FFFFFF',
-  },
   inputContainer: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -229,11 +166,6 @@ const styles = StyleSheet.create({
   },
   footer: {
     alignItems: 'center',
-  },
-  footerText: {
-    fontSize: 14,
-    color: '#6B7280',
-    textAlign: 'center',
   },
   signupLink: {
     color: '#3B82F6',
