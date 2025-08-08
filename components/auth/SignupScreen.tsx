@@ -15,7 +15,7 @@ import { User as UserIcon, Mail, Lock } from 'lucide-react-native';
 import { useRouter } from 'expo-router';
 
 export default function SignupScreen() {
-  const { signup } = useAuth();
+  const { signup, isLoading: authLoading } = useAuth();
   const router = useRouter();
   const [name, setName] = useState('');
   const [email, setEmail] = useState('');
@@ -32,7 +32,7 @@ export default function SignupScreen() {
     setIsLoading(true);
 
     try {
-      const success = await signup(name,email, password, role);
+      const success = await signup(name, email, password, role);
       if (success) {
         Alert.alert('Success', 'Account created! Please verify your email and log in.', [
           {
@@ -40,11 +40,9 @@ export default function SignupScreen() {
             onPress: () => router.replace('/Login'),
           },
         ]);
-      } else {
-        Alert.alert('Error', 'Signup failed');
       }
-    } catch (error) {
-      Alert.alert('Error', 'Signup failed. Please try again.');
+    } catch (error: any) {
+      Alert.alert('Error', error.message || 'Signup failed. Please try again.');
     } finally {
       setIsLoading(false);
     }
@@ -71,7 +69,6 @@ export default function SignupScreen() {
                 ]}
                 onPress={() => setRole('customer')}
               >
-                <UserIcon size={20} color={role === 'customer' ? '#FFFFFF' : '#6B7280'} />
                 <Text style={[
                   styles.roleButtonText,
                   role === 'customer' && styles.roleButtonTextActive
@@ -87,7 +84,6 @@ export default function SignupScreen() {
                 ]}
                 onPress={() => setRole('seller')}
               >
-                <UserIcon size={20} color={role === 'seller' ? '#FFFFFF' : '#6B7280'} />
                 <Text style={[
                   styles.roleButtonText,
                   role === 'seller' && styles.roleButtonTextActive
@@ -135,18 +131,18 @@ export default function SignupScreen() {
             </View>
 
             <TouchableOpacity
-              style={[styles.signupButton, isLoading && styles.signupButtonDisabled]}
+              style={[styles.signupButton, (isLoading || authLoading) && styles.signupButtonDisabled]}
               onPress={handleSignup}
-              disabled={isLoading}
+              disabled={isLoading || authLoading}
             >
               <Text style={styles.signupButtonText}>
-                {isLoading ? 'Signing up...' : 'Sign Up'}
+                {(isLoading || authLoading) ? 'Signing up...' : 'Sign Up'}
               </Text>
             </TouchableOpacity>
           </View>
 
           <View style={styles.footer}>
-            <TouchableOpacity onPress={() => router.navigate('/Login')}>
+            <TouchableOpacity onPress={() => router.replace('/Login')}>
               <Text style={styles.footerText}>
                 Already have an account? Sign In
               </Text>
@@ -157,7 +153,6 @@ export default function SignupScreen() {
     </SafeAreaView>
   );
 }
-
 
 const styles = StyleSheet.create({
   container: {
@@ -198,7 +193,6 @@ const styles = StyleSheet.create({
   },
   roleButton: {
     flex: 1,
-    flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
     paddingVertical: 12,
@@ -211,7 +205,6 @@ const styles = StyleSheet.create({
     fontSize: 16,
     fontWeight: '500',
     color: '#6B7280',
-    marginLeft: 8,
   },
   roleButtonTextActive: {
     color: '#FFFFFF',

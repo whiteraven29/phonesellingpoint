@@ -15,7 +15,7 @@ import { User as UserIcon, Lock } from 'lucide-react-native';
 import { useRouter } from 'expo-router';
 
 export default function LoginScreen() {
-  const { signin } = useAuth();
+  const { signin, isLoading: authLoading } = useAuth();
   const router = useRouter();
   const [name, setName] = useState('');
   const [password, setPassword] = useState('');
@@ -32,12 +32,10 @@ export default function LoginScreen() {
     try {
       const success = await signin(name, password);
       if (success) {
-        router.replace('/'); // Go to home tab after login
-      } else {
-        Alert.alert('Error', 'Invalid credentials');
+        router.replace('/(tabs)');
       }
-    } catch (error) {
-      Alert.alert('Error', 'Login failed. Please try again.');
+    } catch (error: any) {
+      Alert.alert('Error', error.message || 'Login failed. Please try again.');
     } finally {
       setIsLoading(false);
     }
@@ -81,18 +79,18 @@ export default function LoginScreen() {
             </View>
 
             <TouchableOpacity
-              style={[styles.loginButton, isLoading && styles.loginButtonDisabled]}
+              style={[styles.loginButton, (isLoading || authLoading) && styles.loginButtonDisabled]}
               onPress={handleLogin}
-              disabled={isLoading}
+              disabled={isLoading || authLoading}
             >
               <Text style={styles.loginButtonText}>
-                {isLoading ? 'Signing in...' : 'Sign In'}
+                {(isLoading || authLoading) ? 'Signing in...' : 'Sign In'}
               </Text>
             </TouchableOpacity>
           </View>
 
           <View style={styles.footer}>
-            <TouchableOpacity onPress={() => router.navigate('/Signup')}>
+            <TouchableOpacity onPress={() => router.push('/Signup')}>
               <Text style={styles.signupLink}>Don't have an account? Sign Up</Text>
             </TouchableOpacity>
           </View>

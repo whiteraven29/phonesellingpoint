@@ -12,7 +12,7 @@ import {
   Dimensions,
   ActivityIndicator,
 } from 'react-native';
-import { Search, ShoppingCart, Star, LogOut } from 'lucide-react-native';
+import { Search, ShoppingCart, Star, LogOut, User as UserIcon } from 'lucide-react-native';
 import { useRouter } from 'expo-router';
 import { useAuth } from '@/components/auth/AuthContext';
 import { supabase } from '@/lib/supabase';
@@ -23,9 +23,11 @@ interface Phone {
   brand: string;
   price: number;
   stock: number;
-  image: string;
+  image: string; // Changed from image_url to match your seller tab
   rating: number;
   description: string;
+  seller_id: string;
+  user_id: string;
 }
 
 export default function BrowseTab() {
@@ -37,27 +39,49 @@ export default function BrowseTab() {
   const [cartCount, setCartCount] = useState(0);
   const [loading, setLoading] = useState(true);
   const router = useRouter();
-  const { user, signout } = useAuth();
+  const { user, isSeller, signout } = useAuth();
 
   useEffect(() => {
     fetchPhones();
-    if (user) {
+    setupRealtimeUpdates();
+    
+    if (user && !isSeller) {
       fetchCartCount();
     }
-  }, [user]);
+
+    return () => {
+      supabase.removeAllChannels();
+    };
+  }, [user, isSeller]);
 
   const fetchPhones = async () => {
     setLoading(true);
     try {
-      const { data, error } = await supabase
+      let query = supabase
         .from('phones')
         .select('*')
         .gte('stock', 1);
 
+      // If user is a seller, show only their products
+      // If user is a customer (or not logged in), show all products from all sellers
+      if (user && isSeller) {
+        query = query.eq('user_id', user.id);
+      }
+      // For customers, we don't filter - they see all products
+
+      const { data, error } = await query;
+
       if (error) throw error;
       
-      setPhones(data || []);
-      setFilteredPhones(data || []);
+      // Add default rating if not present
+      const phonesWithRating = (data || []).map(phone => ({
+        ...phone,
+        rating: phone.rating || 4.5, // Default rating if not set
+        image: phone.image || 'https://via.placeholder.com/150' // Ensure image field exists
+      }));
+      
+      setPhones(phonesWithRating);
+      setFilteredPhones(phonesWithRating);
     } catch (error: any) {
       Alert.alert('Error', `Failed to fetch phones: ${error.message}`);
     } finally {
@@ -65,12 +89,54 @@ export default function BrowseTab() {
     }
   };
 
+  const setupRealtimeUpdates = () => {
+    const channel = supabase
+      .channel('phones_changes')
+      .on(
+        'postgres_changes',
+        {
+          event: '*',
+          schema: 'public',
+          table: 'phones'
+        },
+        (payload) => {
+          if (payload.eventType === 'INSERT') {
+            const newPhone = {
+              ...payload.new as Phone,
+              rating: payload.new.rating || 4.5,
+              image: payload.new.image || 'https://via.placeholder.com/150'
+            };
+            setPhones(prev => [...prev, newPhone]);
+          } else if (payload.eventType === 'UPDATE') {
+            setPhones(prev => 
+              prev.map(phone => 
+                phone.id === payload.new.id ? {
+                  ...payload.new as Phone,
+                  rating: payload.new.rating || 4.5,
+                  image: payload.new.image || 'https://via.placeholder.com/150'
+                } : phone
+              )
+            );
+          } else if (payload.eventType === 'DELETE') {
+            setPhones(prev => 
+              prev.filter(phone => phone.id !== payload.old.id)
+            );
+          }
+        }
+      )
+      .subscribe();
+
+    return channel;
+  };
+
   const fetchCartCount = async () => {
+    if (!user || isSeller) return;
+    
     try {
       const { count, error } = await supabase
         .from('cart_items')
         .select('*', { count: 'exact' })
-        .eq('user_id', user?.id || '');
+        .eq('user_id', user.id);
 
       if (error) throw error;
       
@@ -113,14 +179,25 @@ export default function BrowseTab() {
       return;
     }
 
+    if (isSeller) {
+      Alert.alert('Not Available', 'Sellers cannot purchase items');
+      return;
+    }
+
     try {
       const { data: phone, error: phoneError } = await supabase
         .from('phones')
-        .select('stock')
+        .select('stock, user_id, seller_id')
         .eq('id', phoneId)
         .single();
 
       if (phoneError || !phone) throw phoneError || new Error('Phone not found');
+      
+      // Prevent users from adding their own products to cart
+      if (phone.user_id === user.id || phone.seller_id === user.id) {
+        Alert.alert('Error', 'You cannot add your own products to cart');
+        return;
+      }
 
       const { data: existingItem, error: cartError } = await supabase
         .from('cart_items')
@@ -162,12 +239,32 @@ export default function BrowseTab() {
     }
   };
 
+  const getImageUri = (imageUrl: string) => {
+    if (!imageUrl || imageUrl === 'https://via.placeholder.com/150') {
+      return 'https://via.placeholder.com/150';
+    }
+    
+    // If it's already a full URL, return as is
+    if (imageUrl.startsWith('http')) {
+      return imageUrl;
+    }
+    
+    // If it's a Supabase storage path, construct the full URL
+    if (imageUrl.includes('phone-images/')) {
+      const { data } = supabase.storage
+        .from('phone-images')
+        .getPublicUrl(imageUrl.split('phone-images/')[1]);
+      return data.publicUrl;
+    }
+    
+    return imageUrl;
+  };
+
   useEffect(() => {
     filterAndSortPhones();
   }, [searchQuery, selectedBrand, sortOption, phones]);
 
   const brands = ['All', ...Array.from(new Set(phones.map((phone) => phone.brand)))];
-
   const sortOptions = [
     { label: 'Default', value: 'default' },
     { label: 'Price: Low to High', value: 'priceLow' },
@@ -192,22 +289,43 @@ export default function BrowseTab() {
   return (
     <SafeAreaView style={styles.container}>
       <View style={styles.header}>
-        <Text style={styles.headerTitle}>Phone Store</Text>
+        <Text style={styles.headerTitle}>
+          {isSeller ? 'Seller Dashboard' : 'Phone Store'}
+        </Text>
         <View style={styles.headerButtons}>
-          <TouchableOpacity 
-            style={styles.cartButton} 
-            onPress={() => router.push('/cart')}
-          >
-            <ShoppingCart size={24} color="#2563EB" />
-            {cartCount > 0 && (
-              <View style={styles.cartBadge}>
-                <Text style={styles.cartBadgeText}>{cartCount}</Text>
-              </View>
-            )}
-          </TouchableOpacity>
-          <TouchableOpacity style={styles.logoutButton} onPress={signout}>
-            <LogOut size={24} color="#EF4444" />
-          </TouchableOpacity>
+          {/* Only show cart for customers */}
+          {!isSeller && (
+            <TouchableOpacity 
+              style={styles.cartButton} 
+              onPress={() => router.push('/cart')}
+            >
+              <ShoppingCart size={24} color="#2563EB" />
+              {cartCount > 0 && (
+                <View style={styles.cartBadge}>
+                  <Text style={styles.cartBadgeText}>{cartCount}</Text>
+                </View>
+              )}
+            </TouchableOpacity>
+          )}
+          {user && (
+            <>
+              <TouchableOpacity 
+                style={styles.profileButton} 
+                onPress={() => router.push((isSeller ? '/seller' : '/profile') as any)}
+              >
+                <UserIcon size={24} color="#2563EB" />
+              </TouchableOpacity>
+              <TouchableOpacity 
+                style={styles.logoutButton} 
+                onPress={async () => {
+                  await signout();
+                  router.replace('/Login');
+                }}
+              >
+                <LogOut size={24} color="#EF4444" />
+              </TouchableOpacity>
+            </>
+          )}
         </View>
       </View>
 
@@ -267,7 +385,9 @@ export default function BrowseTab() {
         {filteredPhones.length === 0 ? (
           <View style={styles.emptyContainer}>
             <Text style={styles.emptyText}>No Phones Found</Text>
-            <Text style={styles.emptySubText}>Try adjusting your search or filters</Text>
+            <Text style={styles.emptySubText}>
+              {isSeller ? 'You haven\'t added any products yet' : 'Try adjusting your search or filters'}
+            </Text>
           </View>
         ) : (
           <View style={styles.phoneGrid}>
@@ -278,7 +398,15 @@ export default function BrowseTab() {
                 onPress={() => router.push(`/product/${phone.id}`)}
                 activeOpacity={0.7}
               >
-                <Image source={{ uri: phone.image }} style={styles.phoneImage} />
+                <Image 
+                  source={{ uri: getImageUri(phone.image) }} 
+                  style={styles.phoneImage} 
+                  defaultSource={{ uri: 'https://via.placeholder.com/150' }}
+                  onError={(error) => {
+                    console.log('Image failed to load for phone:', phone.id, 'URL:', phone.image);
+                    console.log('Error details:', error.nativeEvent.error);
+                  }}
+                />
                 <View style={styles.phoneInfo}>
                   <Text style={styles.phoneName} numberOfLines={1}>
                     {phone.name}
@@ -289,7 +417,7 @@ export default function BrowseTab() {
                   </Text>
                   <View style={styles.ratingContainer}>
                     <Star size={16} color="#FBBF24" fill="#FBBF24" />
-                    <Text style={styles.rating}>{phone.rating}</Text>
+                    <Text style={styles.rating}>{phone.rating.toFixed(1)}</Text>
                   </View>
                   <View style={styles.priceStockContainer}>
                     <Text style={styles.phonePrice}>${phone.price.toFixed(2)}</Text>
@@ -299,18 +427,30 @@ export default function BrowseTab() {
                       {phone.stock > 0 ? `${phone.stock} in stock` : 'Out of stock'}
                     </Text>
                   </View>
-                  <TouchableOpacity
-                    style={[
-                      styles.addToCartButton,
-                      phone.stock === 0 && styles.disabledButton,
-                    ]}
-                    onPress={() => addToCart(phone.id)}
-                    disabled={phone.stock === 0}
-                  >
-                    <Text style={styles.addToCartText}>
-                      {phone.stock === 0 ? 'Out of Stock' : 'Add to Cart'}
-                    </Text>
-                  </TouchableOpacity>
+                  {/* Show Add to Cart only for customers and only for other sellers' products */}
+                  {!isSeller && phone.user_id !== user?.id && phone.seller_id !== user?.id && (
+                    <TouchableOpacity
+                      style={[
+                        styles.addToCartButton,
+                        phone.stock === 0 && styles.disabledButton,
+                      ]}
+                      onPress={() => addToCart(phone.id)}
+                      disabled={phone.stock === 0}
+                    >
+                      <Text style={styles.addToCartText}>
+                        {phone.stock === 0 ? 'Out of Stock' : 'Add to Cart'}
+                      </Text>
+                    </TouchableOpacity>
+                  )}
+                  {/* Show Edit button for sellers viewing their own products */}
+                  {isSeller && (phone.user_id === user?.id || phone.seller_id === user?.id) && (
+                    <TouchableOpacity
+                      style={styles.editButton}
+                      onPress={() => router.push('/seller')}
+                    >
+                      <Text style={styles.editButtonText}>Manage Product</Text>
+                    </TouchableOpacity>
+                  )}
                 </View>
               </TouchableOpacity>
             ))}
@@ -352,9 +492,16 @@ const styles = StyleSheet.create({
   headerButtons: {
     flexDirection: 'row',
     alignItems: 'center',
+    gap: 8,
   },
   cartButton: {
     position: 'relative',
+    padding: 8,
+  },
+  profileButton: {
+    padding: 8,
+  },
+  logoutButton: {
     padding: 8,
   },
   cartBadge: {
@@ -372,10 +519,6 @@ const styles = StyleSheet.create({
     color: '#FFFFFF',
     fontSize: 12,
     fontWeight: '600',
-  },
-  logoutButton: {
-    padding: 8,
-    marginLeft: 8,
   },
   searchContainer: {
     paddingHorizontal: 20,
@@ -491,6 +634,7 @@ const styles = StyleSheet.create({
   emptySubText: {
     fontSize: 16,
     color: '#6B7280',
+    textAlign: 'center',
   },
   phoneGrid: {
     flexDirection: 'row',
@@ -514,6 +658,7 @@ const styles = StyleSheet.create({
     height: 160,
     borderTopLeftRadius: 16,
     borderTopRightRadius: 16,
+    backgroundColor: '#F3F4F6',
   },
   phoneInfo: {
     padding: 12,
@@ -575,6 +720,17 @@ const styles = StyleSheet.create({
     backgroundColor: '#9CA3AF',
   },
   addToCartText: {
+    color: '#FFFFFF',
+    fontSize: 14,
+    fontWeight: '600',
+  },
+  editButton: {
+    backgroundColor: '#10B981',
+    paddingVertical: 10,
+    borderRadius: 8,
+    alignItems: 'center',
+  },
+  editButtonText: {
     color: '#FFFFFF',
     fontSize: 14,
     fontWeight: '600',

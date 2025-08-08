@@ -22,6 +22,11 @@ interface OrderItem {
   price: number;
 }
 
+interface Profile {
+  name: string;
+  email: string;
+}
+
 interface Order {
   id: string;
   user_id: string;
@@ -32,11 +37,20 @@ interface Order {
   status: 'pending' | 'confirmed' | 'rejected' | 'fulfilled';
   created_at: string;
   order_items: OrderItem[];
-  user_profile?: {
-    username: string;
-    email: string;
+  profile?: Profile;
+}
+
+interface UserWithMetadata {
+  id: string;
+  email?: string;
+  user_metadata?: {
+    role?: string;
   };
 }
+
+type SupabaseOrderResponse = Omit<Order, 'profile'> & {
+  profiles: Profile[];
+};
 
 export default function OrdersTab() {
   const [orders, setOrders] = useState<Order[]>([]);
@@ -44,7 +58,7 @@ export default function OrdersTab() {
   const [loading, setLoading] = useState(true);
   const [updating, setUpdating] = useState(false);
   const router = useRouter();
-  const { user } = useAuth();
+  const { user } = useAuth() as { user: UserWithMetadata | null };
 
   useEffect(() => {
     if (user) {
@@ -73,19 +87,17 @@ export default function OrdersTab() {
             quantity,
             price
           ),
-          user:profiles(
-            username,
+          profiles:profiles(
+            name,
             email
           )
         `)
         .order('created_at', { ascending: false });
 
-      // Apply filter if not 'all'
       if (filter !== 'all') {
         query = query.eq('status', filter);
       }
 
-      // For customers, only show their own orders
       if (user?.user_metadata?.role !== 'seller') {
         query = query.eq('user_id', user?.id || '');
       }
@@ -94,7 +106,12 @@ export default function OrdersTab() {
 
       if (error) throw error;
       
-      setOrders(data as Order[] || []);
+      const transformedData = data?.map((order: SupabaseOrderResponse) => ({
+        ...order,
+        profile: order.profiles?.[0]
+      })) as Order[];
+      
+      setOrders(transformedData || []);
     } catch (error: any) {
       Alert.alert('Error', `Failed to fetch orders: ${error.message}`);
     } finally {
@@ -186,7 +203,6 @@ export default function OrdersTab() {
         </Text>
       </View>
 
-      {/* Filter Tabs */}
       <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.filterContainer}>
         {filterOptions.map(option => (
           <TouchableOpacity
@@ -237,7 +253,7 @@ export default function OrdersTab() {
                   <View style={styles.customerRow}>
                     <User size={16} color="#6B7280" />
                     <Text style={styles.customerText}>
-                      {order.customer_name} ({order.user_profile?.email || order.customer_email})
+                      {order.customer_name} ({order.profile?.email || order.customer_email})
                     </Text>
                   </View>
                   <View style={styles.customerRow}>
@@ -488,5 +504,15 @@ const styles = StyleSheet.create({
     color: '#FFFFFF',
     fontSize: 14,
     fontWeight: '600',
+  },
+  loadingContainer: {
+    flex: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  loadingText: {
+    marginTop: 16,
+    fontSize: 16,
+    color: '#6B7280',
   },
 });

@@ -28,6 +28,7 @@ interface Phone {
   image: string;
   description: string;
   user_id: string;
+  seller_id?: string;
 }
 
 export default function SellerTab() {
@@ -40,7 +41,7 @@ export default function SellerTab() {
     brand: '',
     price: '',
     stock: '',
-    image: '',
+    image_url: '',
     description: '',
   });
   const [loading, setLoading] = useState(true);
@@ -74,7 +75,7 @@ export default function SellerTab() {
       brand: '',
       price: '',
       stock: '',
-      image: '',
+      image_url: '',
       description: '',
     });
     setEditingPhone(null);
@@ -99,7 +100,7 @@ export default function SellerTab() {
       brand: phone.brand,
       price: phone.price.toString(),
       stock: phone.stock.toString(),
-      image: phone.image,
+      image_url: phone.image,
       description: phone.description,
     });
     setEditingPhone(phone);
@@ -119,7 +120,7 @@ export default function SellerTab() {
       quality: 0.7,
     });
     if (!result.canceled && result.assets && result.assets.length > 0) {
-      setFormData((prev) => ({ ...prev, image: result.assets[0].uri }));
+      setFormData((prev) => ({ ...prev, image_url: result.assets[0].uri }));
     }
   };
 
@@ -187,10 +188,16 @@ export default function SellerTab() {
       return;
     }
 
-    let imageUrl = formData.image;
-    if (formData.image && formData.image.startsWith('file://')) {
+    // Validate user.id is a valid UUID or at least not empty
+    if (!user.id || user.id.trim() === '') {
+      Alert.alert('Error', 'Invalid user session. Please log out and log back in.');
+      return;
+    }
+
+    let imageUrl = formData.image_url;
+    if (formData.image_url && formData.image_url.startsWith('file://')) {
       try {
-        const uploadedUrl = await uploadImage(formData.image);
+        const uploadedUrl = await uploadImage(formData.image_url);
         if (!uploadedUrl) return;
         imageUrl = uploadedUrl;
       } catch (error: any) {
@@ -206,7 +213,9 @@ export default function SellerTab() {
       stock,
       image: imageUrl || 'https://via.placeholder.com/150',
       description: formData.description,
-      user_id: user.id
+      user_id: user.id,
+      // Only include seller_id if it's a valid non-empty string, otherwise let it be null
+      ...(user.id && user.id.trim() !== '' ? { seller_id: user.id } : {})
     };
 
     try {
@@ -243,12 +252,16 @@ export default function SellerTab() {
       console.error('Save phone error:', {
         message: error.message,
         code: error.code,
-        details: error.details
+        details: error.details,
+        phoneData: phoneData, // Add this to help debug
+        userId: user.id // Add this to help debug
       });
       
       let errorMessage = error.message;
       if (error.code === '42501') {
         errorMessage = "You don't have permission to modify this phone";
+      } else if (error.code === '22P02') {
+        errorMessage = "Invalid data format. Please check all fields and try again.";
       }
       
       Alert.alert('Error', `Failed to save phone: ${errorMessage}`);
@@ -448,9 +461,9 @@ export default function SellerTab() {
             <View style={styles.inputGroup}>
               <Text style={styles.inputLabel}>Image</Text>
               <View style={styles.imageUploadContainer}>
-                {formData.image ? (
+                {formData.image_url ? (
                   <Image
-                    source={{ uri: formData.image }}
+                    source={{ uri: formData.image_url }}
                     style={styles.imagePreview}
                   />
                 ) : (

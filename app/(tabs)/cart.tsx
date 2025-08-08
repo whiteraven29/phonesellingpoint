@@ -13,16 +13,16 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { useRouter } from 'expo-router';
 import { useAuth } from '@/components/auth/AuthContext';
 import { supabase } from '@/lib/supabase';
-import { Phone, CartItem, SupabaseCartItem } from '@/types/types'; // Adjust the import path as necessary
+import { Phone, CartItem } from '@/types/types';
 
 /**
- * CartScreen component displays the user's shopping cart.
- * It allows users to view, update quantities, remove items, and place orders.
+ * CartScreen component displays the user's shopping cart with improved image handling.
  */
 export default function CartScreen() {
   const [cartItems, setCartItems] = useState<CartItem[]>([]);
   const [loading, setLoading] = useState(true);
   const [updating, setUpdating] = useState(false);
+  const [imageErrors, setImageErrors] = useState<Record<string, boolean>>({});
   const router = useRouter();
   const { user } = useAuth();
 
@@ -33,42 +33,57 @@ export default function CartScreen() {
   }, [user]);
 
   const fetchCartItems = async () => {
-  setLoading(true);
-  try {
-    const { data, error } = await supabase
-      .from('cart_items')
-      .select(`
-        id,
-        phone_id,
-        user_id,
-        quantity,
-        phone:phones!inner(
+    setLoading(true);
+    try {
+      const { data, error } = await supabase
+        .from('cart_items')
+        .select(`
           id,
-          name,
-          price,
-          image,
-          stock,
-          brand,
-          description
-        )
-      `)
-      .eq('user_id', user?.id || '');
+          phone_id,
+          user_id,
+          quantity,
+          phone:phones!inner(
+            id,
+            name,
+            price,
+            image,
+            stock,
+            brand,
+            description
+          )
+        `)
+        .eq('user_id', user?.id || '');
 
-    if (error) throw error;
+      if (error) throw error;
+      
+      const transformedItems = data.map(item => ({
+        ...item,
+        phone: Array.isArray(item.phone) ? item.phone[0] : item.phone
+      })) as CartItem[];
+      
+      setCartItems(transformedItems);
+    } catch (error: any) {
+      Alert.alert('Error', `Failed to load cart: ${error.message}`);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleImageError = (itemId: string) => {
+    setImageErrors(prev => ({ ...prev, [itemId]: true }));
+  };
+
+  const isValidImageUrl = (url: string | null | undefined): boolean => {
+    if (!url) return false;
     
-    // Type assertion with proper transformation
-    const cartItems = data.map(item => ({
-      ...item,
-      phone: item.phone[0] // Take first element of the array
-    })) as CartItem[];
+    // Check URL format
+    const urlPattern = /^https?:\/\/.+\/.+$/i;
+    if (!urlPattern.test(url)) return false;
     
-    setCartItems(cartItems);
-  } catch (error: any) {
-    Alert.alert('Error', `Failed to load cart: ${error.message}`);
-  } finally {
-    setLoading(false);
-  }
-};
+    // Check for common image extensions
+    const imageExtensions = ['.jpg', '.jpeg', '.png', '.gif', '.webp'];
+    return imageExtensions.some(ext => url.toLowerCase().includes(ext));
+  };
 
   const updateQuantity = async (itemId: string, newQuantity: number) => {
     if (newQuantity < 1) return;
@@ -136,7 +151,7 @@ export default function CartScreen() {
     try {
       // Get user profile for contact info
       const { data: profile, error: profileError } = await supabase
-        .from('user_profiles')
+        .from('profiles')
         .select('*')
         .eq('id', user.id)
         .single();
@@ -154,7 +169,7 @@ export default function CartScreen() {
         .from('orders')
         .insert({
           user_id: user.id,
-          customer_name: profile.username || 'Anonymous',
+          customer_name: profile.name || 'Anonymous',
           customer_phone: profile.phone || 'Not provided',
           customer_email: profile.email || user.email || 'Not provided',
           total_amount: totalAmount,
@@ -235,7 +250,17 @@ export default function CartScreen() {
         ) : (
           cartItems.map((item) => (
             <View key={item.id} style={styles.itemContainer}>
-              <Image source={{ uri: item.phone.image }} style={styles.itemImage} />
+              {isValidImageUrl(item.phone.image) && !imageErrors[item.id] ? (
+                <Image 
+                  source={{ uri: item.phone.image! }} 
+                  style={styles.itemImage}
+                  onError={() => handleImageError(item.id)}
+                />
+              ) : (
+                <View style={styles.imagePlaceholder}>
+                  <Text style={styles.placeholderText}>No Image</Text>
+                </View>
+              )}
               <View style={styles.itemDetails}>
                 <Text style={styles.itemName}>{item.phone.name}</Text>
                 <Text style={styles.itemPrice}>${item.phone.price.toFixed(2)}</Text>
@@ -290,7 +315,6 @@ export default function CartScreen() {
     </SafeAreaView>
   );
 }
-
 
 const styles = StyleSheet.create({
   safeArea: {
@@ -381,6 +405,21 @@ const styles = StyleSheet.create({
     height: 80,
     borderRadius: 8,
     marginRight: 16,
+    resizeMode: 'contain',
+    backgroundColor: '#F3F4F6',
+  },
+  imagePlaceholder: {
+    width: 80,
+    height: 80,
+    borderRadius: 8,
+    marginRight: 16,
+    backgroundColor: '#E5E7EB',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  placeholderText: {
+    color: '#6B7280',
+    fontSize: 12,
   },
   itemDetails: {
     flex: 1,
