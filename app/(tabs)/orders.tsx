@@ -60,9 +60,15 @@ export default function OrdersTab() {
   const router = useRouter();
   const { user } = useAuth() as { user: UserWithMetadata | null };
 
+  const isSeller = user?.user_metadata?.role === 'seller';
+
   useEffect(() => {
     if (user) {
       fetchOrders();
+    } else {
+      setLoading(false);
+      Alert.alert('Error', 'Please log in to view orders');
+      router.push('/Login');
     }
   }, [user, filter]);
 
@@ -80,46 +86,153 @@ export default function OrdersTab() {
           total_amount,
           status,
           created_at,
-          order_items:order_items(
+          order_items:order_items (
             id,
             phone_id,
             phone_name,
             quantity,
             price
           ),
-          profiles:profiles(
+          profiles:profiles (
             name,
             email
           )
         `)
         .order('created_at', { ascending: false });
 
-      if (filter !== 'all') {
-        query = query.eq('status', filter);
+      if (isSeller) {
+        // Fetch phone IDs for the seller
+        const { data: phoneIds, error: phoneError } = await supabase
+          .from('phones')
+          .select('id')
+          .eq('seller_id', user?.id || '');
+
+        if (phoneError) throw phoneError;
+        if (!phoneIds || phoneIds.length === 0) {
+          setOrders([]);
+          setLoading(false);
+          return;
+        }
+
+        const phoneIdArray = phoneIds.map(phone => phone.id);
+
+        // Fetch order IDs for the seller's phones
+        const { data: orderIds, error: orderItemsError } = await supabase
+          .from('order_items')
+          .select('order_id')
+          .in('phone_id', phoneIdArray);
+
+        if (orderItemsError) throw orderItemsError;
+        if (!orderIds || orderIds.length === 0) {
+          setOrders([]);
+          setLoading(false);
+          return;
+        }
+
+        const orderIdArray = orderIds.map(item => item.order_id);
+
+        // Filter orders by order IDs
+        query = query.in('id', orderIdArray);
+      } else {
+        // For customers, fetch only their own orders
+        query = query.eq('user_id', user?.id || '');
       }
 
-      if (user?.user_metadata?.role !== 'seller') {
-        query = query.eq('user_id', user?.id || '');
+      if (filter !== 'all') {
+        query = query.eq('status', filter);
       }
 
       const { data, error } = await query;
 
       if (error) throw error;
-      
-      const transformedData = data?.map((order: SupabaseOrderResponse) => ({
+
+      const transformedData = (data || []).map((order: SupabaseOrderResponse) => ({
         ...order,
-        profile: order.profiles?.[0]
+        created_at: new Date(order.created_at).toISOString(),
+        profile: order.profiles?.[0],
       })) as Order[];
-      
-      setOrders(transformedData || []);
+
+      setOrders(transformedData);
     } catch (error: any) {
-      Alert.alert('Error', `Failed to fetch orders: ${error.message}`);
+      if (typeof error === 'object' && error !== null && 'message' in error && typeof (error as any).message === 'string' && (error as any).message.includes('row-level security')) {
+        Alert.alert('Error', 'Please log in to view orders');
+        router.push('/Login');
+      } else {
+        Alert.alert('Error', `Failed to fetch orders: ${(error as any)?.message ?? String(error)}`);
+      }
+      console.error('Fetch orders error:', error);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const fetchSellerOrders = async () => {
+    setLoading(true);
+    try {
+      const { data, error } = await supabase
+        .from('orders')
+        .select(`
+          id,
+          user_id,
+          created_at,
+          customer_name,
+          customer_email,
+          customer_phone,
+          total_amount,
+          status,
+          order_items:order_items (
+            id,
+            phone_id,
+            phone_name,
+            quantity,
+            price,
+            phone:phones (
+              id,
+              name,
+              brand,
+              seller_id
+            )
+          )
+        `)
+        .order('created_at', { ascending: false });
+
+      if (error) throw error;
+
+      // Filter orders where any order_item.phone (array) contains a phone with seller_id === user.id
+      const sellerOrders = (data || []).filter(order =>
+        order.order_items.some((item: { phone: any }) =>
+          Array.isArray(item.phone)
+            ? item.phone.some((phoneObj: any) => user && phoneObj.seller_id === user.id)
+            : user && item.phone?.seller_id === user.id
+        )
+      );
+
+      setOrders(
+        sellerOrders.map(order => ({
+          ...order,
+          user_id: order.user_id ?? '', // Provide a fallback if user_id is missing
+          profile: undefined, // or map profile if available in your data
+        }))
+      );
+    } catch (error) {
+      if (error.message.includes('row-level security')) {
+        Alert.alert('Error', 'Please log in to view orders');
+        router.push('/Login');
+      } else {
+        Alert.alert('Error', `Failed to fetch orders: ${error.message}`);
+      }
+      console.error('Fetch orders error:', error);
     } finally {
       setLoading(false);
     }
   };
 
   const updateOrderStatus = async (orderId: string, newStatus: Order['status']) => {
+    if (!isSeller) {
+      Alert.alert('Error', 'Only sellers can update order status');
+      return;
+    }
+
     setUpdating(true);
     try {
       const { error } = await supabase
@@ -129,22 +242,29 @@ export default function OrdersTab() {
 
       if (error) throw error;
 
-      setOrders(prev => prev.map(order => 
-        order.id === orderId ? { ...order, status: newStatus } : order
-      ));
-      
+      setOrders(prev =>
+        prev.map(order =>
+          order.id === orderId ? { ...order, status: newStatus } : order
+        )
+      );
+
       const statusText = newStatus.charAt(0).toUpperCase() + newStatus.slice(1);
       Alert.alert('Success', `Order ${statusText} successfully`);
     } catch (error: any) {
-      Alert.alert('Error', `Failed to update order: ${error.message}`);
+      if (error.message.includes('row-level security')) {
+        Alert.alert('Error', 'Please log in to update order status');
+        router.push('/Login');
+      } else {
+        Alert.alert('Error', `Failed to update order: ${error.message}`);
+      }
+      console.error('Update order status error:', error);
     } finally {
       setUpdating(false);
     }
   };
 
   const getFilteredOrders = () => {
-    if (filter === 'all') return orders;
-    return orders.filter(order => order.status === filter);
+    return orders; // Filtering is now handled server-side
   };
 
   const getStatusIcon = (status: Order['status']) => {
@@ -179,13 +299,12 @@ export default function OrdersTab() {
 
   const filteredOrders = getFilteredOrders();
   const filterOptions = ['all', 'pending', 'confirmed', 'fulfilled', 'rejected'];
-  const isSeller = user?.user_metadata?.role === 'seller';
 
   if (loading) {
     return (
       <SafeAreaView style={styles.container}>
         <View style={styles.header}>
-          <Text style={styles.headerTitle}>Order Management</Text>
+          <Text style={styles.headerTitle}>{isSeller ? 'Order Management' : 'My Orders'}</Text>
         </View>
         <View style={styles.loadingContainer}>
           <ActivityIndicator size="large" color="#2563EB" />
@@ -198,28 +317,21 @@ export default function OrdersTab() {
   return (
     <SafeAreaView style={styles.container}>
       <View style={styles.header}>
-        <Text style={styles.headerTitle}>
-          {isSeller ? 'Order Management' : 'My Orders'}
-        </Text>
+        <Text style={styles.headerTitle}>{isSeller ? 'Order Management' : 'My Orders'}</Text>
       </View>
 
       <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.filterContainer}>
         {filterOptions.map(option => (
           <TouchableOpacity
             key={option}
-            style={[
-              styles.filterChip,
-              filter === option && styles.filterChipActive
-            ]}
+            style={[styles.filterChip, filter === option && styles.filterChipActive]}
             onPress={() => setFilter(option as any)}
           >
-            <Text style={[
-              styles.filterChipText,
-              filter === option && styles.filterChipTextActive
-            ]}>
-              {option.charAt(0).toUpperCase() + option.slice(1)} ({
-                option === 'all' ? orders.length : orders.filter(o => o.status === option).length
-              })
+            <Text
+              style={[styles.filterChipText, filter === option && styles.filterChipTextActive]}
+            >
+              {option.charAt(0).toUpperCase() + option.slice(1)} (
+              {option === 'all' ? orders.length : orders.filter(o => o.status === option).length})
             </Text>
           </TouchableOpacity>
         ))}

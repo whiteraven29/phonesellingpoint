@@ -15,9 +15,6 @@ import { useAuth } from '@/components/auth/AuthContext';
 import { supabase } from '@/lib/supabase';
 import { Phone, CartItem } from '@/types/types';
 
-/**
- * CartScreen component displays the user's shopping cart with improved image handling.
- */
 export default function CartScreen() {
   const [cartItems, setCartItems] = useState<CartItem[]>([]);
   const [loading, setLoading] = useState(true);
@@ -64,6 +61,7 @@ export default function CartScreen() {
       setCartItems(transformedItems);
     } catch (error: any) {
       Alert.alert('Error', `Failed to load cart: ${error.message}`);
+      console.error('Fetch cart error:', error);
     } finally {
       setLoading(false);
     }
@@ -112,6 +110,7 @@ export default function CartScreen() {
       );
     } catch (error: any) {
       Alert.alert('Error', `Failed to update quantity: ${error.message}`);
+      console.error('Update quantity error:', error);
     } finally {
       setUpdating(false);
     }
@@ -131,6 +130,7 @@ export default function CartScreen() {
       Alert.alert('Success', 'Item removed from cart');
     } catch (error: any) {
       Alert.alert('Error', `Failed to remove item: ${error.message}`);
+      console.error('Remove item error:', error);
     } finally {
       setUpdating(false);
     }
@@ -252,7 +252,7 @@ export default function CartScreen() {
             <View key={item.id} style={styles.itemContainer}>
               {isValidImageUrl(item.phone.image) && !imageErrors[item.id] ? (
                 <Image 
-                  source={{ uri: item.phone.image! }} 
+                  source={{ uri: item.phone.image }} 
                   style={styles.itemImage}
                   onError={() => handleImageError(item.id)}
                 />
@@ -263,7 +263,14 @@ export default function CartScreen() {
               )}
               <View style={styles.itemDetails}>
                 <Text style={styles.itemName}>{item.phone.name}</Text>
+                <Text style={styles.itemBrand}>{item.phone.brand}</Text>
+                <Text style={styles.itemDescription} numberOfLines={2}>
+                  {item.phone.description}
+                </Text>
                 <Text style={styles.itemPrice}>${item.phone.price.toFixed(2)}</Text>
+                <Text style={styles.itemSubtotal}>
+                  Subtotal: ${(item.phone.price * item.quantity).toFixed(2)}
+                </Text>
                 <View style={styles.quantityContainer}>
                   <TouchableOpacity 
                     style={styles.quantityButton}
@@ -389,7 +396,6 @@ const styles = StyleSheet.create({
     color: '#FFFFFF',
   },
   itemContainer: {
-    flexDirection: 'row',
     backgroundColor: '#FFFFFF',
     borderRadius: 12,
     padding: 16,
@@ -401,65 +407,82 @@ const styles = StyleSheet.create({
     shadowRadius: 2,
   },
   itemImage: {
-    width: 80,
-    height: 80,
+    width: '100%',
+    height: 200,
     borderRadius: 8,
-    marginRight: 16,
+    marginBottom: 12,
     resizeMode: 'contain',
     backgroundColor: '#F3F4F6',
   },
   imagePlaceholder: {
-    width: 80,
-    height: 80,
+    width: '100%',
+    height: 200,
     borderRadius: 8,
-    marginRight: 16,
+    marginBottom: 12,
     backgroundColor: '#E5E7EB',
     justifyContent: 'center',
     alignItems: 'center',
   },
   placeholderText: {
     color: '#6B7280',
-    fontSize: 12,
+    fontSize: 16,
   },
   itemDetails: {
     flex: 1,
-    justifyContent: 'center',
   },
   itemName: {
-    fontSize: 18,
+    fontSize: 20,
     fontWeight: '600',
     color: '#111827',
+    marginBottom: 4,
+  },
+  itemBrand: {
+    fontSize: 14,
+    color: '#6B7280',
+    marginBottom: 8,
+  },
+  itemDescription: {
+    fontSize: 14,
+    color: '#4B5563',
+    marginBottom: 12,
+    lineHeight: 20,
   },
   itemPrice: {
-    fontSize: 16,
+    fontSize: 18,
     color: '#2563EB',
-    marginVertical: 4,
+    marginBottom: 4,
+  },
+  itemSubtotal: {
+    fontSize: 16,
+    color: '#10B981',
+    marginBottom: 12,
   },
   quantityContainer: {
     flexDirection: 'row',
     alignItems: 'center',
-    marginTop: 8,
+    marginBottom: 12,
   },
   quantityButton: {
     backgroundColor: '#E5E7EB',
-    width: 32,
-    height: 32,
-    borderRadius: 16,
+    width: 36,
+    height: 36,
+    borderRadius: 18,
     justifyContent: 'center',
     alignItems: 'center',
   },
   quantityButtonText: {
-    fontSize: 20,
+    fontSize: 24,
     fontWeight: 'bold',
     color: '#111827',
   },
   quantityText: {
-    fontSize: 16,
+    fontSize: 18,
     color: '#111827',
-    marginHorizontal: 12,
+    marginHorizontal: 16,
+    minWidth: 30,
+    textAlign: 'center',
   },
   removeButton: {
-    marginTop: 8,
     alignSelf: 'flex-start',
   },
   removeButtonText: {

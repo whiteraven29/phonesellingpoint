@@ -8,8 +8,10 @@ import {
   SafeAreaView,
   Dimensions,
   Modal,
+  ActivityIndicator,
 } from 'react-native';
 import { TrendingUp, DollarSign, Package, Users, Calendar, Filter, AlertTriangle } from 'lucide-react-native';
+import { supabase } from '@/lib/supabase';
 
 const { width } = Dimensions.get('window');
 
@@ -21,11 +23,14 @@ interface SalesData {
 }
 
 interface PhoneSales {
+  id: string;
   name: string;
   brand: string;
   unitsSold: number;
   revenue: number;
   stock: number;
+  cost_price: number; // Add this field
+  cogs: number; // Cost of goods sold
 }
 
 export default function AnalyticsTab() {
@@ -33,65 +38,117 @@ export default function AnalyticsTab() {
   const [salesData, setSalesData] = useState<SalesData[]>([]);
   const [topSellingPhones, setTopSellingPhones] = useState<PhoneSales[]>([]);
   const [selectedProduct, setSelectedProduct] = useState<PhoneSales | null>(null);
+  const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    // Mock data - in real app this would come from Supabase
-    const mockSalesData: SalesData[] = [
-      { date: '2024-01-15', revenue: 2398, orders: 2, units: 3 },
-      { date: '2024-01-14', revenue: 1898, orders: 3, units: 2 },
-      { date: '2024-01-13', revenue: 999, orders: 1, units: 1 },
-      { date: '2024-01-12', revenue: 3597, orders: 4, units: 4 },
-      { date: '2024-01-11', revenue: 1799, orders: 2, units: 2 },
-    ];
-
-    const mockTopSelling: PhoneSales[] = [
-      { name: 'iPhone 15 Pro', brand: 'Apple', unitsSold: 15, revenue: 14985, stock: 2 },
-      { name: 'Galaxy S24 Ultra', brand: 'Samsung', unitsSold: 12, revenue: 14388, stock: 8 },
-      { name: 'Pixel 8 Pro', brand: 'Google', unitsSold: 8, revenue: 7192, stock: 0 },
-      { name: 'OnePlus 12', brand: 'OnePlus', unitsSold: 6, revenue: 4794, stock: 20 },
-    ];
-
-    setSalesData(mockSalesData);
-    setTopSellingPhones(mockTopSelling);
+    fetchAnalytics();
   }, [timeframe]);
 
-  const getTotalRevenue = () => {
-    return salesData.reduce((total, data) => total + data.revenue, 0);
+  const fetchAnalytics = async () => {
+    setLoading(true);
+
+    let fromDate = new Date();
+    if (timeframe === 'weekly') fromDate.setDate(fromDate.getDate() - 7);
+    else if (timeframe === 'monthly') fromDate.setMonth(fromDate.getMonth() - 1);
+
+    // Fetch orders
+    const { data: orders, error: ordersError } = await supabase
+      .from('orders')
+      .select('id, created_at, total_amount')
+      .gte('created_at', fromDate.toISOString());
+
+    if (ordersError) {
+      setLoading(false);
+      return;
+    }
+
+    // Fetch order_items and join with phones (including cost_price)
+    const { data: orderItems, error: itemsError } = await supabase
+      .from('order_items')
+      .select('id, order_id, phone_id, quantity, price, phones (id, name, brand, stock, cost_price)')
+      .in('order_id', orders.map((o: any) => o.id));
+
+    if (itemsError) {
+      setLoading(false);
+      return;
+    }
+
+    // Aggregate sales data by date
+    const salesByDate: { [date: string]: SalesData } = {};
+    orders.forEach((order: any) => {
+      const date = order.created_at.slice(0, 10);
+      if (!salesByDate[date]) {
+        salesByDate[date] = { date, revenue: 0, orders: 0, units: 0 };
+      }
+      salesByDate[date].revenue += order.total_amount;
+      salesByDate[date].orders += 1;
+    });
+    orderItems.forEach((item: any) => {
+      const order = orders.find((o: any) => o.id === item.order_id);
+      if (order) {
+        const date = order.created_at.slice(0, 10);
+        salesByDate[date].units += item.quantity;
+      }
+    });
+    setSalesData(Object.values(salesByDate).sort((a, b) => b.date.localeCompare(a.date)));
+
+    // Aggregate top selling phones and calculate COGS
+    const phoneMap: { [id: string]: PhoneSales } = {};
+    orderItems.forEach((item: any) => {
+      if (!item.phones) return;
+      const phoneId = item.phone_id;
+      if (!phoneMap[phoneId]) {
+        phoneMap[phoneId] = {
+          id: phoneId,
+          name: item.phones.name,
+          brand: item.phones.brand,
+          unitsSold: 0,
+          revenue: 0,
+          stock: item.phones.stock,
+          cost_price: item.phones.cost_price || 0,
+          cogs: 0,
+        };
+      }
+      phoneMap[phoneId].unitsSold += item.quantity;
+      phoneMap[phoneId].revenue += item.price * item.quantity;
+      phoneMap[phoneId].cogs += (item.phones.cost_price || 0) * item.quantity;
+    });
+    setTopSellingPhones(Object.values(phoneMap).sort((a, b) => b.unitsSold - a.unitsSold));
+
+    setLoading(false);
   };
 
-  const getTotalOrders = () => {
-    return salesData.reduce((total, data) => total + data.orders, 0);
-  };
-
-  const getTotalUnits = () => {
-    return salesData.reduce((total, data) => total + data.units, 0);
-  };
-
+  // --- Metrics calculations ---
+  const getTotalRevenue = () => salesData.reduce((total, data) => total + data.revenue, 0);
+  const getTotalOrders = () => salesData.reduce((total, data) => total + data.orders, 0);
+  const getTotalUnits = () => salesData.reduce((total, data) => total + data.units, 0);
   const getAverageOrderValue = () => {
     const totalRevenue = getTotalRevenue();
     const totalOrders = getTotalOrders();
     return totalOrders > 0 ? totalRevenue / totalOrders : 0;
   };
-
-  const getLowStockItems = () => {
-    return topSellingPhones.filter((phone) => phone.stock <= 3).length;
-  };
-
-  const getInventoryValue = () => {
-    return topSellingPhones.reduce((total, phone) => total + phone.revenue, 0);
-  };
-
+  const getLowStockItems = () => topSellingPhones.filter((phone) => phone.stock <= 3).length;
+  const getInventoryValue = () => topSellingPhones.reduce((total, phone) => total + phone.revenue, 0);
   const getStockTurnoverRate = () => {
     const totalUnitsSold = topSellingPhones.reduce((total, phone) => total + phone.unitsSold, 0);
     const totalStock = topSellingPhones.reduce((total, phone) => total + phone.stock, 0);
     return totalStock > 0 ? (totalUnitsSold / (totalUnitsSold + totalStock)) * 100 : 0;
   };
+  // Profit and Loss
+  const getTotalCOGS = () => topSellingPhones.reduce((total, phone) => total + phone.cogs, 0);
+  const getTotalProfit = () => getTotalRevenue() - getTotalCOGS();
+  const getTotalLoss = () => getTotalProfit() < 0 ? Math.abs(getTotalProfit()) : 0;
 
+  // --- UI ---
   const timeframes = [
     { key: 'daily', label: 'Daily' },
     { key: 'weekly', label: 'Weekly' },
     { key: 'monthly', label: 'Monthly' },
   ];
+
+  // Currency formatter for TSH
+  const formatTSH = (amount: number) =>
+    `TSH ${amount.toLocaleString('en-TZ', { maximumFractionDigits: 0 })}`;
 
   return (
     <SafeAreaView style={styles.container}>
@@ -117,167 +174,165 @@ export default function AnalyticsTab() {
         ))}
       </View>
 
-      <ScrollView style={styles.content} showsVerticalScrollIndicator={false}>
-        {/* Key Metrics */}
-        <View style={styles.metricsContainer}>
-          <View style={styles.metricCard}>
-            <DollarSign size={24} color="#10B981" />
-            <Text style={styles.metricValue}>${getTotalRevenue().toLocaleString()}</Text>
-            <Text style={styles.metricLabel}>Total Revenue</Text>
-            <View style={styles.metricChange}>
-              <TrendingUp size={16} color="#10B981" />
-              <Text style={styles.metricChangeText}>+12.5%</Text>
-            </View>
-          </View>
-          <View style={styles.metricCard}>
-            <Users size={24} color="#2563EB" />
-            <Text style={styles.metricValue}>{getTotalOrders()}</Text>
-            <Text style={styles.metricLabel}>Total Orders</Text>
-            <View style={styles.metricChange}>
-              <TrendingUp size={16} color="#10B981" />
-              <Text style={styles.metricChangeText}>+8.3%</Text>
-            </View>
-          </View>
-          <View style={styles.metricCard}>
-            <Package size={24} color="#F59E0B" />
-            <Text style={styles.metricValue}>{getTotalUnits()}</Text>
-            <Text style={styles.metricLabel}>Units Sold</Text>
-            <View style={styles.metricChange}>
-              <TrendingUp size={16} color="#10B981" />
-              <Text style={styles.metricChangeText}>+15.2%</Text>
-            </View>
-          </View>
+      {loading ? (
+        <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center' }}>
+          <ActivityIndicator size="large" color="#2563EB" />
         </View>
-        <View style={styles.metricsContainer}>
-          <View style={styles.metricCard}>
-            <Calendar size={24} color="#8B5CF6" />
-            <Text style={styles.metricValue}>${getAverageOrderValue().toFixed(0)}</Text>
-            <Text style={styles.metricLabel}>Avg Order Value</Text>
-            <View style={styles.metricChange}>
-              <TrendingUp size={16} color="#10B981" />
-              <Text style={styles.metricChangeText}>+5.1%</Text>
-            </View>
-          </View>
-          <View style={styles.metricCard}>
-            <AlertTriangle size={24} color="#EF4444" />
-            <Text style={styles.metricValue}>{getLowStockItems()}</Text>
-            <Text style={styles.metricLabel}>Low Stock Items</Text>
-            <View style={styles.metricChange}>
-              <Text style={styles.metricChangeText}>Monitor</Text>
-            </View>
-          </View>
-          <View style={styles.metricCard}>
-            <Package size={24} color="#3B82F6" />
-            <Text style={styles.metricValue}>{getStockTurnoverRate().toFixed(1)}%</Text>
-            <Text style={styles.metricLabel}>Stock Turnover</Text>
-            <View style={styles.metricChange}>
-              <TrendingUp size={16} color="#10B981" />
-              <Text style={styles.metricChangeText}>+2.3%</Text>
-            </View>
-          </View>
-        </View>
-
-        {/* Sales Chart Placeholder */}
-        <View style={styles.chartSection}>
-          <Text style={styles.sectionTitle}>Revenue Trend</Text>
-          <View style={styles.chartPlaceholder}>
-            <Text style={styles.chartPlaceholderText}>Chart would be displayed here</Text>
-          </View>
-        </View>
-
-        {/* Inventory Alerts */}
-        {getLowStockItems() > 0 && (
-          <View style={styles.alertSection}>
-            <Text style={styles.sectionTitle}>Inventory Alerts</Text>
-            <View style={styles.alertCard}>
-              <AlertTriangle size={24} color="#EF4444" />
-              <View style={styles.alertContent}>
-                <Text style={styles.alertTitle}>Low Stock Alert</Text>
-                <Text style={styles.alertText}>
-                  {topSellingPhones
-                    .filter((phone) => phone.stock <= 3)
-                    .map((phone) => `${phone.name} (${phone.stock} left)`)
-                    .join(', ')}
-                </Text>
+      ) : (
+        <ScrollView style={styles.content} showsVerticalScrollIndicator={false}>
+          {/* Horizontally scrollable metrics */}
+          <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ marginBottom: 16 }}>
+            <View style={{ flexDirection: 'row', gap: 12 }}>
+              <View style={styles.metricCard}>
+                <DollarSign size={24} color="#10B981" />
+                <Text style={styles.metricValue}>{formatTSH(getTotalRevenue())}</Text>
+                <Text style={styles.metricLabel}>Total Revenue</Text>
+              </View>
+              <View style={styles.metricCard}>
+                <DollarSign size={24} color="#2563EB" />
+                <Text style={styles.metricValue}>{formatTSH(getTotalCOGS())}</Text>
+                <Text style={styles.metricLabel}>Cost of Goods Sold</Text>
+              </View>
+              <View style={styles.metricCard}>
+                <TrendingUp size={24} color="#10B981" />
+                <Text style={styles.metricValue}>{formatTSH(getTotalProfit())}</Text>
+                <Text style={styles.metricLabel}>Profit</Text>
+              </View>
+              <View style={styles.metricCard}>
+                <AlertTriangle size={24} color="#EF4444" />
+                <Text style={styles.metricValue}>{formatTSH(getTotalLoss())}</Text>
+                <Text style={styles.metricLabel}>Loss</Text>
+              </View>
+              <View style={styles.metricCard}>
+                <Users size={24} color="#2563EB" />
+                <Text style={styles.metricValue}>{getTotalOrders()}</Text>
+                <Text style={styles.metricLabel}>Total Orders</Text>
+              </View>
+              <View style={styles.metricCard}>
+                <Package size={24} color="#F59E0B" />
+                <Text style={styles.metricValue}>{getTotalUnits()}</Text>
+                <Text style={styles.metricLabel}>Units Sold</Text>
+              </View>
+              <View style={styles.metricCard}>
+                <Calendar size={24} color="#8B5CF6" />
+                <Text style={styles.metricValue}>{formatTSH(getAverageOrderValue())}</Text>
+                <Text style={styles.metricLabel}>Avg Order Value</Text>
+              </View>
+              <View style={styles.metricCard}>
+                <AlertTriangle size={24} color="#EF4444" />
+                <Text style={styles.metricValue}>{getLowStockItems()}</Text>
+                <Text style={styles.metricLabel}>Low Stock Items</Text>
+              </View>
+              <View style={styles.metricCard}>
+                <Package size={24} color="#3B82F6" />
+                <Text style={styles.metricValue}>{getStockTurnoverRate().toFixed(1)}%</Text>
+                <Text style={styles.metricLabel}>Stock Turnover</Text>
               </View>
             </View>
-          </View>
-        )}
+          </ScrollView>
 
-        {/* Inventory Value */}
-        <View style={styles.inventoryValueSection}>
-          <Text style={styles.sectionTitle}>Inventory Value</Text>
-          <View style={styles.metricCard}>
-            <DollarSign size={24} color="#10B981" />
-            <Text style={styles.metricValue}>${getInventoryValue().toLocaleString()}</Text>
-            <Text style={styles.metricLabel}>Total Inventory Value</Text>
-          </View>
-        </View>
-
-        {/* Top Selling Products */}
-        <View style={styles.topProductsSection}>
-          <Text style={styles.sectionTitle}>Top Selling Products</Text>
-          <View style={styles.productGrid}>
-            {topSellingPhones.map((phone, index) => (
-              <TouchableOpacity
-                key={index}
-                style={styles.productCard}
-                onPress={() => setSelectedProduct(phone)}
-                activeOpacity={0.7}
-              >
-                <View style={styles.productRank}>
-                  <Text style={styles.rankNumber}>{index + 1}</Text>
-                </View>
-                <View style={styles.productInfo}>
-                  <Text style={styles.productName} numberOfLines={1}>
-                    {phone.name}
-                  </Text>
-                  <Text style={styles.productBrand}>{phone.brand}</Text>
-                  <Text style={styles.productStock}>
-                    Stock: {phone.stock} {phone.stock <= 3 ? '(Low)' : ''}
-                  </Text>
-                </View>
-                <View style={styles.productStats}>
-                  <Text style={styles.productUnits}>{phone.unitsSold} units</Text>
-                  <Text style={styles.productRevenue}>${phone.revenue.toLocaleString()}</Text>
-                </View>
-              </TouchableOpacity>
-            ))}
-          </View>
-        </View>
-
-        {/* Recent Sales */}
-        <View style={styles.recentSalesSection}>
-          <Text style={styles.sectionTitle}>Recent Sales</Text>
-          {salesData.length === 0 ? (
-            <View style={styles.emptyState}>
-              <Text style={styles.emptyStateText}>No sales data available</Text>
-              <Text style={styles.emptyStateSubText}>Check back later or adjust the timeframe</Text>
-              <TouchableOpacity style={styles.emptyStateButton}>
-                <Text style={styles.emptyStateButtonText}>Refresh</Text>
-              </TouchableOpacity>
+          {/* Sales Chart Placeholder */}
+          <View style={styles.chartSection}>
+            <Text style={styles.sectionTitle}>Revenue Trend</Text>
+            <View style={styles.chartPlaceholder}>
+              <Text style={styles.chartPlaceholderText}>Chart would be displayed here</Text>
             </View>
-          ) : (
-            salesData.slice(0, 5).map((data, index) => (
-              <View key={index} style={styles.salesCard}>
-                <View style={styles.salesDate}>
-                  <Text style={styles.salesDateText}>
-                    {new Date(data.date).toLocaleDateString('en-US', {
-                      month: 'short',
-                      day: 'numeric',
-                    })}
+          </View>
+
+          {/* Inventory Alerts */}
+          {getLowStockItems() > 0 && (
+            <View style={styles.alertSection}>
+              <Text style={styles.sectionTitle}>Inventory Alerts</Text>
+              <View style={styles.alertCard}>
+                <AlertTriangle size={24} color="#EF4444" />
+                <View style={styles.alertContent}>
+                  <Text style={styles.alertTitle}>Low Stock Alert</Text>
+                  <Text style={styles.alertText}>
+                    {topSellingPhones
+                      .filter((phone) => phone.stock <= 3)
+                      .map((phone) => `${phone.name} (${phone.stock} left)`)
+                      .join(', ')}
                   </Text>
-                </View>
-                <View style={styles.salesStats}>
-                  <Text style={styles.salesRevenue}>${data.revenue.toLocaleString()}</Text>
-                  <Text style={styles.salesOrders}>{data.orders} orders</Text>
-                  <Text style={styles.salesUnits}>{data.units} units</Text>
                 </View>
               </View>
-            ))
+            </View>
           )}
-        </View>
-      </ScrollView>
+
+          {/* Inventory Value */}
+          <View style={styles.inventoryValueSection}>
+            <Text style={styles.sectionTitle}>Inventory Value</Text>
+            <View style={styles.metricCard}>
+              <DollarSign size={24} color="#10B981" />
+              <Text style={styles.metricValue}>{formatTSH(getInventoryValue())}</Text>
+              <Text style={styles.metricLabel}>Total Inventory Value</Text>
+            </View>
+          </View>
+
+          {/* Top Selling Products */}
+          <View style={styles.topProductsSection}>
+            <Text style={styles.sectionTitle}>Top Selling Products</Text>
+            <View style={styles.productGrid}>
+              {topSellingPhones.map((phone, index) => (
+                <TouchableOpacity
+                  key={index}
+                  style={styles.productCard}
+                  onPress={() => setSelectedProduct(phone)}
+                  activeOpacity={0.7}
+                >
+                  <View style={styles.productRank}>
+                    <Text style={styles.rankNumber}>{index + 1}</Text>
+                  </View>
+                  <View style={styles.productInfo}>
+                    <Text style={styles.productName} numberOfLines={1}>
+                      {phone.name}
+                    </Text>
+                    <Text style={styles.productBrand}>{phone.brand}</Text>
+                    <Text style={styles.productStock}>
+                      Stock: {phone.stock} {phone.stock <= 3 ? '(Low)' : ''}
+                    </Text>
+                  </View>
+                  <View style={styles.productStats}>
+                    <Text style={styles.productUnits}>{phone.unitsSold} units</Text>
+                    <Text style={styles.productRevenue}>${phone.revenue.toLocaleString()}</Text>
+                  </View>
+                </TouchableOpacity>
+              ))}
+            </View>
+          </View>
+
+          {/* Recent Sales */}
+          <View style={styles.recentSalesSection}>
+            <Text style={styles.sectionTitle}>Recent Sales</Text>
+            {salesData.length === 0 ? (
+              <View style={styles.emptyState}>
+                <Text style={styles.emptyStateText}>No sales data available</Text>
+                <Text style={styles.emptyStateSubText}>Check back later or adjust the timeframe</Text>
+                <TouchableOpacity style={styles.emptyStateButton}>
+                  <Text style={styles.emptyStateButtonText}>Refresh</Text>
+                </TouchableOpacity>
+              </View>
+            ) : (
+              salesData.slice(0, 5).map((data, index) => (
+                <View key={index} style={styles.salesCard}>
+                  <View style={styles.salesDate}>
+                    <Text style={styles.salesDateText}>
+                      {new Date(data.date).toLocaleDateString('en-US', {
+                        month: 'short',
+                        day: 'numeric',
+                      })}
+                    </Text>
+                  </View>
+                  <View style={styles.salesStats}>
+                    <Text style={styles.salesRevenue}>${data.revenue.toLocaleString()}</Text>
+                    <Text style={styles.salesOrders}>{data.orders} orders</Text>
+                    <Text style={styles.salesUnits}>{data.units} units</Text>
+                  </View>
+                </View>
+              ))
+            )}
+          </View>
+        </ScrollView>
+      )}
 
       {/* Product Details Modal */}
       <Modal

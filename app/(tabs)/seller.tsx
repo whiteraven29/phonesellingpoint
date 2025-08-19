@@ -1,4 +1,9 @@
 import React, { useState, useEffect } from 'react';
+import { Platform } from 'react-native';
+
+// Add Blob type declaration for React Native
+// declare var Blob: new (arrayBuffer: ArrayBuffer | ArrayBufferView[], options?: { type?: string }) => any;
+
 import {
   View,
   Text,
@@ -15,8 +20,8 @@ import {
 } from 'react-native';
 import { Plus, CreditCard as Edit, AlertTriangle, Package, DollarSign } from 'lucide-react-native';
 import * as ImagePicker from 'expo-image-picker';
-import * as FileSystem from 'expo-file-system';
 import { supabase } from '@/lib/supabase';
+import 'react-native-url-polyfill/auto';
 import { useAuth } from '@/components/auth/AuthContext';
 
 interface Phone {
@@ -114,7 +119,7 @@ export default function SellerTab() {
       return;
     }
     const result = await ImagePicker.launchImageLibraryAsync({
-      mediaTypes: ImagePicker.MediaTypeOptions.Images,
+      mediaTypes: ImagePicker.MediaType.IMAGE,
       allowsEditing: true,
       aspect: [1, 1],
       quality: 0.7,
@@ -125,39 +130,35 @@ export default function SellerTab() {
   };
 
   const uploadImage = async (uri: string) => {
-    if (!isSeller || !user) {
-      throw new Error('Only sellers can upload images');
-    }
-
+    if (!isSeller || !user) throw new Error('Only sellers can upload images');
     setUploading(true);
     try {
-      const fileInfo = await FileSystem.getInfoAsync(uri);
-      if (!fileInfo.exists) throw new Error('File does not exist');
-      if (fileInfo.size > 5 * 1024 * 1024) {
-        throw new Error('Image must be smaller than 5MB');
-      }
-
       const fileExt = uri.split('.').pop();
       const fileName = `${user.id}/${Date.now()}.${fileExt}`;
 
-      const base64 = await FileSystem.readAsStringAsync(uri, {
-        encoding: FileSystem.EncodingType.Base64,
-      });
+      // Use fetch to get the blob (works on device, not web)
+      // This approach is more reliable than using FileSystem for binary data
+      const response = await fetch(uri);
+      const blob = await response.blob();
 
-      const { error } = await supabase.storage
+      // Upload to Supabase Storage with better error handling
+      const { data, error } = await supabase.storage
         .from('phone-images')
-        .upload(fileName, decodeURIComponent(base64), {
+        .upload(fileName, blob, {
           contentType: `image/${fileExt === 'png' ? 'png' : 'jpeg'}`,
           upsert: false,
         });
 
-      if (error) throw error;
+      if (error) {
+        console.error('Supabase upload error:', error);
+        throw new Error(`Upload failed: ${error.message || 'Unknown error'}`);
+      }
 
-      const { data: { publicUrl } } = supabase.storage
+      const { data: publicUrlData } = supabase.storage
         .from('phone-images')
         .getPublicUrl(fileName);
 
-      return publicUrl;
+      return publicUrlData.publicUrl;
     } catch (error: any) {
       console.error('Upload error:', error);
       throw error;
@@ -201,7 +202,7 @@ export default function SellerTab() {
         if (!uploadedUrl) return;
         imageUrl = uploadedUrl;
       } catch (error: any) {
-        Alert.alert('Upload Error', error.message);
+        Alert.alert('Upload Error', error.message || 'Failed to upload image');
         return;
       }
     }
@@ -214,8 +215,7 @@ export default function SellerTab() {
       image: imageUrl || 'https://via.placeholder.com/150',
       description: formData.description,
       user_id: user.id,
-      // Only include seller_id if it's a valid non-empty string, otherwise let it be null
-      ...(user.id && user.id.trim() !== '' ? { seller_id: user.id } : {})
+      seller_id: user.id, // <-- Always set this!
     };
 
     try {
@@ -262,6 +262,10 @@ export default function SellerTab() {
         errorMessage = "You don't have permission to modify this phone";
       } else if (error.code === '22P02') {
         errorMessage = "Invalid data format. Please check all fields and try again.";
+      } else if (error.message && error.message.includes('storage')) {
+        errorMessage = "Storage error: " + error.message;
+      } else if (error.message && error.message.includes('Upload failed')) {
+        errorMessage = error.message;
       }
       
       Alert.alert('Error', `Failed to save phone: ${errorMessage}`);
